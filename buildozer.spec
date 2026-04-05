@@ -8,7 +8,7 @@ package.domain = org.gabriel
 
 source.dir = .
 
-source.include_exts = py,kv
+source.include_exts = py,kv,txt
 
 version = 0.1
 

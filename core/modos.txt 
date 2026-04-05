@@ -1,0 +1,15 @@
+# Modo normal
+saudacao=Oi! 😄|E aí, tudo certo? 😎|Olá! Que bom te ver! 👋
+pergunta_nome=Sou a NOVA 🤖|Pode me chamar de NOVA 🌟
+hora=Agora são {hora} ⏰
+data=Hoje é {data} 📅
+sair=exit
+desconhecido=Hmm... não entendi 🤔|Pode repetir? 😅|Não captei isso 😬
+
+# Modo engraçado
+saudacao=Oiii! 😂|E aí, meu chapa? 😎|Salve, salve! 🤪
+pergunta_nome=Sou a NOVA, mas posso ser seu amigo imaginário 😜
+hora=Olha no relógio aí! Agora são {hora} ⏰
+data=Hoje é {data} 🎉
+sair=Tchauzinho 👋
+desconhecido=Hã? Não entendi 🤯|Repete aí, por favor 😅

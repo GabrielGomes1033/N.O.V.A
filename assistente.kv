@@ -1,0 +1,63 @@
+#:import dp kivy.metrics.dp
+
+<ChatRoot>:
+    orientation: "vertical"
+    padding: "12dp"
+    spacing: "10dp"
+
+    canvas.before:
+        Color:
+            rgba: 0.07, 0.09, 0.12, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    Label:
+        text: root.modo_label
+        size_hint_y: None
+        height: self.texture_size[1] + dp(12)
+        color: 0.75, 0.9, 1, 1
+        bold: True
+        halign: "left"
+        text_size: self.width, None
+
+    ScrollView:
+        id: scroll
+        do_scroll_x: False
+        bar_width: "6dp"
+
+        Label:
+            id: historico
+            text: ""
+            markup: True
+            size_hint_y: None
+            height: max(self.texture_size[1] + dp(24), scroll.height)
+            text_size: self.width - dp(12), None
+            halign: "left"
+            valign: "top"
+            color: 0.96, 0.97, 0.98, 1
+
+    BoxLayout:
+        size_hint_y: None
+        height: "52dp"
+        spacing: "8dp"
+
+        TextInput:
+            id: entrada
+            multiline: False
+            hint_text: "Digite uma mensagem ou use /modo formal"
+            background_color: 0.12, 0.15, 0.19, 1
+            foreground_color: 1, 1, 1, 1
+            cursor_color: 0.7, 0.9, 1, 1
+            padding: [dp(12), dp(14), dp(12), dp(14)]
+            on_text_validate: root.enviar_mensagem()
+
+        Button:
+            text: "Enviar"
+            size_hint_x: None
+            width: "96dp"
+            background_normal: ""
+            background_color: 0.14, 0.49, 0.75, 1
+            on_release: root.enviar_mensagem()
+
+ChatRoot:
