@@ -1,0 +1,12 @@
+# Python
+venv/
+venv311/
+__pycache__/
+*.pyc
+
+# Buildozer / Android
+.buildozer/
+bin/*.apk
+
+# Outros
+*.log
