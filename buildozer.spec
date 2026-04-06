@@ -8,10 +8,10 @@ package.domain = org.gabriel
 
 source.dir = .
 
-source.include_exts = py,kv,txt
+source.include_exts = py,kv,txt,gif,png,jpg,jpeg
 
 version = 0.1
 
-requirements = python3,kivy,cython==0.29.36
+requirements = python3,kivy,pillow,cython==0.29.36
 
 android.permissions = INTERNET

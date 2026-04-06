@@ -1,63 +1,408 @@
 #:import dp kivy.metrics.dp
 
+# Layout visual principal da NOVA.
+# Este arquivo define o visual "HUD/JARVIS" da interface.
 <ChatRoot>:
     orientation: "vertical"
-    padding: "12dp"
-    spacing: "10dp"
+    padding: "14dp"
+    spacing: "12dp"
 
     canvas.before:
+        # Fundo geral da aplicação e placa iluminada atrás do painel superior.
         Color:
-            rgba: 0.07, 0.09, 0.12, 1
+            rgba: 0.08, 0.03, 0.02, 1
         Rectangle:
             pos: self.pos
             size: self.size
+        Color:
+            rgba: 0.82, 0.28, 0.05, 0.18
+        RoundedRectangle:
+            pos: self.x + dp(8), self.top - dp(170)
+            size: self.width - dp(16), dp(156)
+            radius: [22, 22, 22, 22]
 
-    Label:
-        text: root.modo_label
+    BoxLayout:
+        # Cabeçalho com título da interface e status do sistema.
         size_hint_y: None
-        height: self.texture_size[1] + dp(12)
-        color: 0.75, 0.9, 1, 1
-        bold: True
-        halign: "left"
-        text_size: self.width, None
-
-    ScrollView:
-        id: scroll
-        do_scroll_x: False
-        bar_width: "6dp"
+        height: dp(56)
+        spacing: "8dp"
 
         Label:
+            text: "NOVA // INTERFACE TATICA"
+            color: 1, 0.78, 0.38, 1
+            bold: True
+            font_size: "26sp"
+            halign: "left"
+            valign: "middle"
+            text_size: self.size
+
+        Label:
+            text: root.painel_status
+            color: 0.98, 0.58, 0.19, 1
+            font_size: "13sp"
+            halign: "right"
+            valign: "middle"
+            text_size: self.size
+
+    BoxLayout:
+        # Painel principal com o avatar animado da NOVA e os indicadores do assistente.
+        size_hint_y: None
+        height: dp(148)
+        spacing: "14dp"
+        padding: [dp(16), dp(14), dp(16), dp(14)]
+
+        canvas.before:
+            # Cartão central com borda neon.
+            Color:
+                rgba: 0.13, 0.05, 0.03, 0.97
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [24, 24, 24, 24]
+            Color:
+                rgba: 1, 0.45, 0.08, 0.32
+            Line:
+                rounded_rectangle: [self.x, self.y, self.width, self.height, 24]
+                width: 1.3
+
+        AnchorLayout:
+            # Área reservada ao "núcleo" visual da NOVA.
+            size_hint_x: None
+            width: dp(120)
+            anchor_x: "center"
+            anchor_y: "center"
+
+            Widget:
+                # Anéis externos do avatar, desenhados manualmente no canvas.
+                size_hint: None, None
+                size: dp(96), dp(96)
+
+                canvas.before:
+                    Color:
+                        rgba: 1, 0.44, 0.02, 0.15
+                    Ellipse:
+                        pos: self.pos
+                        size: self.size
+                    Color:
+                        rgba: 1, 0.66, 0.18, 1
+                    Line:
+                        circle: (self.center_x, self.center_y, self.width / 2.15)
+                        width: 1.6
+                    Color:
+                        rgba: 1, 0.22, 0.05, 0.45
+                    Line:
+                        circle: (self.center_x, self.center_y, self.width / 2.5, 20, 300)
+                        width: 2
+
+                FloatLayout:
+                    # Núcleo interno que recorta o GIF em formato circular.
+                    size_hint: None, None
+                    size: dp(58), dp(58)
+                    center: self.parent.center
+
+                    canvas.before:
+                        # Stencil para mascarar o GIF e impedir que ele apareça fora do círculo.
+                        Color:
+                            rgba: 0.09, 0.02, 0.01, 1
+                        Ellipse:
+                            pos: self.pos
+                            size: self.size
+                        StencilPush
+                        Ellipse:
+                            pos: self.pos
+                            size: self.size
+                        StencilUse
+
+                    canvas.after:
+                        # Finaliza a máscara e desenha um contorno leve sobre o núcleo.
+                        StencilUnUse
+                        Ellipse:
+                            pos: self.pos
+                            size: self.size
+                        StencilPop
+                        Color:
+                            rgba: 1, 0.76, 0.26, 0.7
+                        Line:
+                            circle: (self.center_x, self.center_y, self.width / 2)
+                            width: 1.1
+
+                    Image:
+                        # GIF central da assistente.
+                        source: "assets/giphy3.gif"
+                        anim_delay: 0.08
+                        fit_mode: "cover"
+                        size_hint: None, None
+                        size: dp(58), dp(103)
+                        center_x: self.parent.center_x
+                        center_y: self.parent.center_y - dp(1)
+
+        BoxLayout:
+            # Bloco de textos com nome, status e indicadores da assistente.
+            orientation: "vertical"
+            spacing: "4dp"
+
+            Label:
+                text: "NOVA"
+                color: 1, 0.92, 0.8, 1
+                bold: True
+                font_size: "28sp"
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+            Label:
+                text: root.assistente_status
+                color: 1, 0.66, 0.29, 1
+                font_size: "16sp"
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+            Label:
+                text: "ASSISTENTE DE BORDO // análise, resposta e interação em tempo real"
+                color: 0.89, 0.62, 0.46, 1
+                font_size: "13sp"
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+            BoxLayout:
+                size_hint_y: None
+                height: dp(28)
+                spacing: "8dp"
+
+                Label:
+                    text: root.modo_label
+                    color: 1, 0.83, 0.38, 1
+                    font_size: "13sp"
+                    halign: "left"
+                    valign: "middle"
+                    text_size: self.size
+
+                Label:
+                    text: root.voz_label
+                    color: 1, 0.45, 0.22, 1
+                    font_size: "13sp"
+                    halign: "right"
+                    valign: "middle"
+                    text_size: self.size
+
+    BoxLayout:
+        # Cabeçalho da área de conversa.
+        size_hint_y: None
+        height: dp(34)
+        spacing: "8dp"
+
+        Label:
+            text: "FEED DE CONVERSA"
+            color: 1, 0.73, 0.27, 1
+            font_size: "14sp"
+            bold: True
+            halign: "left"
+            valign: "middle"
+            text_size: self.size
+
+        Label:
+            text: "INPUT HUMANO DETECTADO"
+            color: 1, 0.42, 0.18, 1
+            font_size: "12sp"
+            halign: "right"
+            valign: "middle"
+            text_size: self.size
+
+    BoxLayout:
+        # Painel de monitoramento em tempo real do fluxo interno da NOVA.
+        size_hint_y: None
+        height: dp(118)
+        spacing: "10dp"
+        padding: [dp(12), dp(10), dp(12), dp(10)]
+
+        canvas.before:
+            Color:
+                rgba: 0.16, 0.06, 0.03, 0.98
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [18, 18, 18, 18]
+            Color:
+                rgba: 1, 0.52, 0.12, 0.3
+            Line:
+                rounded_rectangle: [self.x, self.y, self.width, self.height, 18]
+                width: 1.0
+
+        BoxLayout:
+            orientation: "vertical"
+            size_hint_x: None
+            width: dp(188)
+            spacing: "4dp"
+
+            Label:
+                text: "MONITOR DA NOVA"
+                color: 1, 0.76, 0.32, 1
+                bold: True
+                font_size: "14sp"
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+            Label:
+                text: root.monitor_resumo
+                color: 1, 0.5, 0.24, 1
+                font_size: "12sp"
+                halign: "left"
+                valign: "top"
+                text_size: self.size
+
+        ScrollView:
+            do_scroll_x: False
+            bar_width: "4dp"
+
+            Label:
+                text: root.monitor_texto
+                size_hint_y: None
+                height: max(self.texture_size[1] + dp(14), dp(84))
+                text_size: self.width - dp(8), None
+                halign: "left"
+                valign: "top"
+                color: 1, 0.9, 0.84, 1
+                font_size: "12sp"
+
+    BoxLayout:
+        # Painel fixo com os principais comandos disponíveis da NOVA.
+        size_hint_y: None
+        height: dp(116)
+        orientation: "vertical"
+        spacing: "6dp"
+        padding: [dp(14), dp(12), dp(14), dp(12)]
+
+        canvas.before:
+            Color:
+                rgba: 0.16, 0.06, 0.03, 0.98
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [18, 18, 18, 18]
+            Color:
+                rgba: 1, 0.52, 0.12, 0.32
+            Line:
+                rounded_rectangle: [self.x, self.y, self.width, self.height, 18]
+                width: 1.0
+
+        Label:
+            text: "COMANDOS DA NOVA"
+            size_hint_y: None
+            height: dp(24)
+            color: 1, 0.76, 0.32, 1
+            bold: True
+            font_size: "14sp"
+            halign: "left"
+            valign: "middle"
+            text_size: self.size
+
+        Label:
+            text: root.comandos_texto
+            color: 1, 0.88, 0.8, 1
+            font_size: "13sp"
+            halign: "left"
+            valign: "top"
+            text_size: self.width, None
+
+    ScrollView:
+        # Região rolável onde o histórico de mensagens aparece.
+        id: scroll
+        do_scroll_x: False
+        bar_width: "5dp"
+        scroll_type: ["bars", "content"]
+
+        canvas.before:
+            # Moldura visual do feed de conversa.
+            Color:
+                rgba: 0.1, 0.04, 0.03, 0.97
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [20, 20, 20, 20]
+            Color:
+                rgba: 1, 0.38, 0.09, 0.22
+            Line:
+                rounded_rectangle: [self.x, self.y, self.width, self.height, 20]
+                width: 1.1
+
+        Label:
+            # Histórico textual da conversa usando markup simples do Kivy.
             id: historico
             text: ""
             markup: True
             size_hint_y: None
-            height: max(self.texture_size[1] + dp(24), scroll.height)
-            text_size: self.width - dp(12), None
+            height: max(self.texture_size[1] + dp(36), scroll.height)
+            text_size: self.width - dp(24), None
+            padding: dp(14), dp(18)
             halign: "left"
             valign: "top"
-            color: 0.96, 0.97, 0.98, 1
+            color: 1, 0.92, 0.86, 1
+            font_size: "22sp"
 
     BoxLayout:
+        # Barra inferior de entrada de mensagem e botão de envio.
         size_hint_y: None
-        height: "52dp"
-        spacing: "8dp"
+        height: dp(68)
+        spacing: "10dp"
 
         TextInput:
+            # Campo onde o usuário digita mensagens e comandos.
             id: entrada
             multiline: False
-            hint_text: "Digite uma mensagem ou use /modo formal"
-            background_color: 0.12, 0.15, 0.19, 1
-            foreground_color: 1, 1, 1, 1
-            cursor_color: 0.7, 0.9, 1, 1
-            padding: [dp(12), dp(14), dp(12), dp(14)]
+            hint_text: "Digite sua mensagem para a NOVA ou use /modo formal"
+            background_normal: ""
+            background_active: ""
+            background_color: 0.11, 0.05, 0.03, 1
+            foreground_color: 1, 0.93, 0.88, 1
+            hint_text_color: 0.72, 0.47, 0.33, 1
+            cursor_color: 1, 0.66, 0.18, 1
+            padding: [dp(16), dp(20), dp(16), dp(16)]
+            font_size: "18sp"
+
+            canvas.before:
+                # Borda tecnológica do campo de entrada.
+                Color:
+                    rgba: 1, 0.45, 0.08, 0.2
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [18, 18, 18, 18]
+                Color:
+                    rgba: 1, 0.63, 0.18, 0.58
+                Line:
+                    rounded_rectangle: [self.x, self.y, self.width, self.height, 18]
+                    width: 1.15
+
             on_text_validate: root.enviar_mensagem()
 
         Button:
-            text: "Enviar"
+            # Botão de envio com visual de comando/ativação.
+            text: "ATIVAR"
             size_hint_x: None
-            width: "96dp"
+            width: dp(132)
+            color: 0.14, 0.04, 0.01, 1
+            bold: True
             background_normal: ""
-            background_color: 0.14, 0.49, 0.75, 1
+            background_down: ""
+            background_color: 0, 0, 0, 0
+
+            canvas.before:
+                Color:
+                    rgba: 1, 0.56, 0.12, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [18, 18, 18, 18]
+                Color:
+                    rgba: 1, 0.9, 0.62, 0.35
+                Line:
+                    rounded_rectangle: [self.x, self.y, self.width, self.height, 18]
+                    width: 1.3
+
             on_release: root.enviar_mensagem()
 
 ChatRoot:
+    # Instancia a raiz da tela.
