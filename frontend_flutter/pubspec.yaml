@@ -1,0 +1,35 @@
+# Nome do pacote/app Flutter.
+name: frontend_flutter
+# Descricao visivel em ferramentas do ecossistema.
+description: Frontend Flutter do projeto
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  # Versao minima e maxima do Dart suportadas por este projeto.
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  # SDK principal do Flutter.
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  flutter_tts: ^4.2.2
+  shared_preferences: ^2.5.3
+  # Reconhecimento de fala (microfone -> texto).
+  speech_to_text: ^7.0.0
+  # Tipografia mais profissional para o painel.
+  google_fonts: ^6.2.1
+
+dev_dependencies:
+  # Biblioteca de testes padrao para Flutter.
+  flutter_test:
+    sdk: flutter
+  # Regras de lint para manter o codigo mais limpo.
+  flutter_lints: ^5.0.0
+
+flutter:
+  # Habilita uso dos icones Material Design.
+  uses-material-design: true
+  assets:
+    - assets/giphy3.gif
