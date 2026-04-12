@@ -125,7 +125,8 @@ def _config_padrao() -> dict:
         "voice_profile": "feminina",
         "escuta_ativa": True,
         "wake_word": "nova",
-        "continuous_wake": True,
+        "continuous_wake": False,
+        "push_to_talk_only": True,
         "allow_voice_on_lock": True,
         "admin_guard": True,
         "telegram_ativo": False,
@@ -171,6 +172,8 @@ def atualizar_config_painel(**campos) -> dict:
         config["wake_word"] = wake_word or "nova"
     if "continuous_wake" in campos and campos.get("continuous_wake") is not None:
         config["continuous_wake"] = bool(campos.get("continuous_wake"))
+    if "push_to_talk_only" in campos and campos.get("push_to_talk_only") is not None:
+        config["push_to_talk_only"] = bool(campos.get("push_to_talk_only"))
     if "allow_voice_on_lock" in campos and campos.get("allow_voice_on_lock") is not None:
         config["allow_voice_on_lock"] = bool(campos.get("allow_voice_on_lock"))
     if "admin_guard" in campos and campos.get("admin_guard") is not None:

@@ -888,6 +888,8 @@ class NovaHandler(BaseHTTPRequestHandler):
                 campos["wake_word"] = body.get("wake_word")
             if "continuous_wake" in body:
                 campos["continuous_wake"] = _bool_ou_none(body.get("continuous_wake"))
+            if "push_to_talk_only" in body:
+                campos["push_to_talk_only"] = _bool_ou_none(body.get("push_to_talk_only"))
             if "allow_voice_on_lock" in body:
                 campos["allow_voice_on_lock"] = _bool_ou_none(body.get("allow_voice_on_lock"))
             if "admin_guard" in body:
