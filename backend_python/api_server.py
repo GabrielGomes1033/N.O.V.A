@@ -6,14 +6,24 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
+import re
 import sys
-from urllib.parse import quote_plus
+import time
+from urllib.parse import parse_qs, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from core.admin import autenticar_admin, configurar_admin, explicacao_completa_admin, status_admin
+from core.admin import (
+    autenticar_admin,
+    configurar_admin,
+    configurar_admin_2fa,
+    explicacao_completa_admin,
+    gerar_codigo_2fa_admin,
+    rotacionar_segredo_2fa,
+    status_admin,
+)
 from core.agente import eh_pedido_de_agente, executar_agente, processar_confirmacao_agente
 from core.despertador import (
     configurar_despertador,
@@ -32,10 +42,70 @@ from core.jarvis_fase2 import (
     relatorio_agora,
     status_fase2,
 )
-from core.backup_drive import restaurar_backup_drive, sincronizar_backup_drive, status_backup_drive
+from core.backup_drive import criar_projeto_drive, restaurar_backup_drive, sincronizar_backup_drive, status_backup_drive
+from core.assistente_plus import (
+    adicionar_lembrete,
+    aprender_gostos_por_mensagem,
+    calcular_expressao,
+    consultar_clima,
+    cotacoes_financeiras,
+    formatar_cotacoes_humanas,
+    listar_lembretes,
+    pesquisar_na_internet,
+    resumo_adaptacao_usuario,
+)
+from core.nova_unica import (
+    aplicar_identidade_nova,
+    atualizar_perfil_por_interacao,
+    briefing_automatico_se_necessario,
+    carregar_perfil,
+    explicar_orquestrador,
+    gerar_briefing_proativo,
+    orquestrar_consulta,
+    registrar_feedback,
+    registrar_metrica,
+    resumo_metricas,
+    resumo_metricas_recursos,
+    gerar_alertas_recomendacoes,
+)
+from core.aprendizado_admin import (
+    atualizar_aprendizado,
+    exportar_aprendizado_json,
+    listar_aprendizados,
+    remover_aprendizado,
+    salvar_aprendizado as salvar_aprendizado_painel,
+)
 from core.memoria import carregar_memoria_usuario, formatar_memoria_usuario, salvar_memoria_usuario, registrar_interacao_usuario
+from core.painel_admin import (
+    adicionar_usuario,
+    atualizar_config_painel,
+    atualizar_usuario,
+    carregar_config_painel,
+    listar_usuarios,
+    remover_usuario,
+)
 from core.pesquisa import gerar_pesquisa_wikipedia
 from core.respostas import carregar_aprendizado, detectar_intencao, extrair_nome_usuario, responder, salvar_aprendizado
+from core.telegram_envio import enviar_mensagem_telegram
+from core.security_audit import auditoria_humana, executar_auditoria_seguranca, obter_historico_auditoria
+from core.premium_memory import (
+    aprender_de_mensagem as premium_aprender,
+    atualizar_perfil as premium_atualizar_perfil,
+    exportar_perfis as premium_exportar_perfis,
+    importar_perfis as premium_importar_perfis,
+    obter_perfil as premium_obter_perfil,
+    personalizar_resposta_por_contexto as premium_personalizar_resposta,
+)
+from core.rag_local import consultar_rag, reindexar_documentos
+from core.automacoes_seguras import (
+    adicionar_rotina,
+    detectar_rotina_disparada,
+    executar_rotina,
+    listar_rotinas,
+    processar_confirmacao_rotina,
+    remover_rotina,
+)
+from core.voz_neural_api import sintetizar_neural_base64
 from core.voz import falar
 
 
@@ -47,12 +117,14 @@ def _novo_contexto():
         "tratamento": memoria.get("tratamento", ""),
         "ultima_intencao": "",
         "confirmacao_pendente": None,
+        "rotina_pendente": None,
         "admin_autenticado": False,
         "admin_usuario": "",
     }
 
 
 CONTEXTO = _novo_contexto()
+API_TTS_SERVIDOR_ATIVO = os.getenv("NOVA_API_SERVER_TTS", "0").strip().lower() in {"1", "true", "on", "sim", "yes"}
 
 
 def sincronizar_memoria():
@@ -67,27 +139,29 @@ def _cmd_admin(texto):
     partes = texto.strip().split()
     if len(partes) == 1:
         return (
-            "Comandos admin: /admin login <usuario> <senha> | /admin logout | /admin status | "
+            "Comandos admin: /admin login <usuario> <senha> [2fa] | /admin logout | /admin status | "
             "/admin explicar | /admin configurar <usuario> <senha> | "
+            "/admin 2fa status|ligar|desligar|codigo|rotacionar | "
             "/admin despertador status|ligar|desligar|testar"
         )
 
     acao = partes[1].lower()
     if acao == "login":
         if len(partes) < 4:
-            return "Use /admin login <usuario> <senha>."
-        if autenticar_admin(partes[2], partes[3]):
+            return "Use /admin login <usuario> <senha> [codigo_2fa]."
+        codigo_2fa = partes[4] if len(partes) >= 5 else ""
+        if autenticar_admin(partes[2], partes[3], codigo_2fa=codigo_2fa):
             CONTEXTO["admin_autenticado"] = True
             CONTEXTO["admin_usuario"] = partes[2]
             return f"Login admin confirmado para {partes[2]}."
-        return "Credenciais de admin inválidas."
+        return "Credenciais admin inválidas (ou 2FA obrigatório/incorreto)."
 
     if acao == "logout":
         CONTEXTO["admin_autenticado"] = False
         CONTEXTO["admin_usuario"] = ""
         return "Sessão admin encerrada."
 
-    if acao in {"status", "explicar", "configurar", "despertador", "jarvis2", "drivebackup"} and not CONTEXTO.get("admin_autenticado"):
+    if acao in {"status", "explicar", "configurar", "despertador", "jarvis2", "drivebackup", "2fa"} and not CONTEXTO.get("admin_autenticado"):
         return "Comando restrito. Faça /admin login primeiro."
 
     if acao == "status":
@@ -101,6 +175,29 @@ def _cmd_admin(texto):
         if ok:
             CONTEXTO["admin_usuario"] = partes[2]
         return msg
+
+    if acao == "2fa":
+        if len(partes) < 3:
+            return "Use /admin 2fa status|ligar|desligar|codigo|rotacionar"
+        sub = partes[2].lower()
+        if sub == "status":
+            ok, payload = gerar_codigo_2fa_admin()
+            if ok:
+                return f"2FA ativo. Código atual (teste local): {payload}"
+            return str(payload)
+        if sub == "ligar":
+            configurar_admin_2fa(True)
+            return "2FA ativado. Próximo login: /admin login <usuario> <senha> <codigo_2fa>."
+        if sub == "desligar":
+            configurar_admin_2fa(False)
+            return "2FA desativado."
+        if sub == "codigo":
+            ok, payload = gerar_codigo_2fa_admin()
+            return f"Código 2FA atual: {payload}" if ok else str(payload)
+        if sub == "rotacionar":
+            ok, payload = rotacionar_segredo_2fa()
+            return str(payload)
+        return "Subcomando 2FA inválido."
 
     if acao == "despertador":
         if len(partes) < 3:
@@ -175,18 +272,96 @@ def _cmd_admin(texto):
 
 
 def processar_mensagem(user):
+    inicio = time.perf_counter()
     user = (user or "").strip()
-    def ret(msg):
+    CONTEXTO["idioma_preferido"] = "pt"
+
+    def ret(msg, ok=True, evento="chat"):
         registrar_interacao_usuario(user, msg)
+        duracao_ms = (time.perf_counter() - inicio) * 1000.0
+        try:
+            registrar_metrica(evento, duracao_ms, ok=ok)
+        except Exception:
+            pass
         return msg
 
     if not user:
         return ret("Mensagem vazia.")
 
+    aprender_gostos_por_mensagem(user)
+    premium_aprender(CONTEXTO.get("nome_usuario", "") or "default", user)
+
+    if CONTEXTO.get("rotina_pendente"):
+        resp_rotina = processar_confirmacao_rotina(user, contexto=CONTEXTO)
+        if resp_rotina:
+            return ret(resp_rotina, evento="automation_confirm")
+
+    rotina = detectar_rotina_disparada(user)
+    if rotina:
+        if rotina.get("sensivel"):
+            CONTEXTO["rotina_pendente"] = {"rule": rotina}
+            return ret(
+                f"Rotina sensível detectada ({rotina.get('gatilho')}). Confirma execução? Responda sim/não.",
+                evento="automation_pending",
+            )
+        return ret(executar_rotina(rotina), evento="automation_exec")
+
     if CONTEXTO.get("confirmacao_pendente"):
         resp_confirm = processar_confirmacao_agente(user, contexto=CONTEXTO)
         if resp_confirm:
             return ret(resp_confirm)
+
+    user_l = user.lower().strip()
+
+    if user_l in {"nova", "ei nova", "ok nova", "olá nova", "ola nova"}:
+        return ret("Oi chefe. Estou pronta para ajudar.")
+
+    if any(k in user_l for k in ["responda em ingles", "responda em inglês", "fale em ingles", "fale em inglês", "speak english"]):
+        return ret("Posso entender termos em inglês, mas para manter sua experiência premium eu vou responder em português.")
+
+    if user_l in {"/orquestrador", "como voce decide", "como você decide"}:
+        return ret(explicar_orquestrador())
+
+    if user_l.startswith("/feedback"):
+        try:
+            partes = user.split(" ", 2)
+            score = int(partes[1]) if len(partes) >= 2 else 5
+            comentario = partes[2] if len(partes) >= 3 else ""
+            out = registrar_feedback(score, comentario=comentario)
+            return ret(
+                f"Feedback registrado. Nota média atual: {out.get('feedback_medio')} "
+                f"({out.get('feedback_total')} avaliações)."
+            )
+        except Exception:
+            return ret("Use /feedback <1-5> <comentário opcional>.")
+
+    if user_l in {"/metricas", "/métricas", "status da assistente"}:
+        met = resumo_metricas()
+        return ret(
+            "Métricas da NOVA:\n"
+            f"- Chats: {met.get('chat_total')}\n"
+            f"- Taxa de sucesso: {met.get('taxa_sucesso_pct')}%\n"
+            f"- Tempo médio: {met.get('tempo_medio_ms')} ms\n"
+            f"- Feedback médio: {met.get('feedback_media')} ({met.get('feedback_total')} avaliações)"
+        )
+
+    if user_l in {
+        "/seguranca",
+        "/segurança",
+        "/auditoria",
+        "/auditoria seguranca",
+        "/auditoria segurança",
+        "varredura de seguranca",
+        "varredura de segurança",
+    }:
+        return ret(auditoria_humana())
+
+    if user_l.startswith("/briefing") or "briefing" == user_l:
+        cidade = ""
+        partes = user.split(" ", 1)
+        if len(partes) > 1:
+            cidade = partes[1].strip()
+        return ret(gerar_briefing_proativo(cidade=cidade))
 
     if user.startswith("/ensinar"):
         try:
@@ -197,15 +372,179 @@ def processar_mensagem(user):
         except Exception:
             return ret("Use /ensinar pergunta = resposta.")
 
+    if user.startswith("/rag reindex"):
+        try:
+            partes = user.split(" ", 2)
+            paths = []
+            if len(partes) >= 3 and partes[2].strip():
+                paths = [p.strip() for p in partes[2].split(",") if p.strip()]
+            out = reindexar_documentos(paths if paths else None)
+            return ret(
+                f"RAG reindexado. Arquivos: {out.get('indexed_files')} | Chunks: {out.get('indexed_chunks')}",
+                evento="rag_index",
+            )
+        except Exception:
+            return ret("Use /rag reindex [arquivo1,arquivo2,...]", ok=False, evento="rag_index")
+
+    if user.startswith("/rag "):
+        pergunta = user[5:].strip()
+        out = consultar_rag(pergunta)
+        if out.get("ok"):
+            fontes = ", ".join(out.get("sources", []))
+            return ret(
+                f"{out.get('answer', '')}\n\nFontes: {fontes}",
+                evento="rag_query",
+            )
+        return ret("RAG sem resultado. Reindexe com /rag reindex.", ok=False, evento="rag_query")
+
+    if user.startswith("/rotina adicionar "):
+        try:
+            payload = user[len("/rotina adicionar ") :].strip()
+            gat, resto = payload.split("=>", 1)
+            gat = gat.strip()
+            sensivel = " sensivel" in resto.lower() or " sensível" in resto.lower()
+            resto = resto.replace(" sensivel", "").replace(" sensível", "").strip()
+            tipo, valor = resto.split(":", 1)
+            rule = adicionar_rotina(gat, tipo.strip(), valor.strip(), sensivel=sensivel)
+            return ret(f"Rotina criada ({rule.get('id')}).", evento="automation_add")
+        except Exception:
+            return ret(
+                "Use /rotina adicionar gatilho => responder:mensagem [sensivel] ou lembrete:texto",
+                ok=False,
+                evento="automation_add",
+            )
+
+    if user_l in {"/rotina listar", "listar rotinas"}:
+        rules = listar_rotinas()
+        if not rules:
+            return ret("Nenhuma rotina cadastrada.", evento="automation_list")
+        linhas = []
+        for r in rules[-20:]:
+            linhas.append(
+                f"{r.get('id')} | {r.get('gatilho')} => {r.get('acao_tipo')} | sensível={r.get('sensivel')} | ativo={r.get('ativo')}"
+            )
+        return ret("Rotinas:\n" + "\n".join(linhas), evento="automation_list")
+
+    if user.startswith("/rotina remover "):
+        rid = user[len("/rotina remover ") :].strip()
+        ok_rm = remover_rotina(rid)
+        if ok_rm:
+            return ret("Rotina removida.", evento="automation_remove")
+        return ret("Rotina não encontrada.", ok=False, evento="automation_remove")
+
     if user.startswith("/google"):
         try:
             _, consulta = user.split(" ", 1)
-            wiki = gerar_pesquisa_wikipedia(consulta)
-            if wiki:
-                return ret(f"{wiki['titulo']}\n{wiki['resumo']}")
-            return ret("Não achei resumo disponível para esse tema no momento.")
+            pesquisa = pesquisar_na_internet(consulta)
+            if pesquisa.get("ok"):
+                fontes = pesquisa.get("fontes", [])
+                fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
+                return ret(f"{pesquisa.get('resumo', '')}{fontes_txt}", evento="web_search")
+            return ret(
+                "Não consegui pesquisar agora. Se quiser, me ensine essa resposta usando /ensinar pergunta = resposta."
+            )
         except Exception:
-            return ret("Use /google algo.")
+            return ret("Use /google algo.", ok=False, evento="web_search")
+
+    if user_l.startswith("pesquisar ") or user_l.startswith("pesquise ") or user_l.startswith("buscar ") or user_l.startswith("busque "):
+        consulta = re.sub(r"^(pesquisar|pesquise|buscar|busque)\s+", "", user, flags=re.IGNORECASE).strip(" :,-")
+        if consulta:
+            resultado = pesquisar_na_internet(consulta)
+            if resultado.get("ok"):
+                fontes = resultado.get("fontes", [])
+                fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
+                return ret(resultado.get("resumo", "") + fontes_txt, evento="web_search")
+        return ret("Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.", ok=False, evento="web_search")
+
+    if any(k in user_l for k in ["pesquise na internet", "procure na internet", "buscar na internet", "pesquise sobre", "procure sobre"]):
+        consulta = user
+        consulta = re.sub(r"^(pesquise|procure|buscar|busque)(\s+na internet|\s+sobre)?", "", consulta, flags=re.IGNORECASE).strip(" :,-")
+        resultado = pesquisar_na_internet(consulta)
+        if resultado.get("ok"):
+            fontes = resultado.get("fontes", [])
+            fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
+            return ret(resultado.get("resumo", "") + fontes_txt, evento="web_search")
+        return ret("Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.", ok=False, evento="web_search")
+
+    if user_l.startswith("/lembrar ") or user_l.startswith("me lembre") or user_l.startswith("lembre-me"):
+        texto = user
+        for pref in ["/lembrar", "me lembre de", "me lembre", "lembre-me de", "lembre-me"]:
+            if texto.lower().startswith(pref):
+                texto = texto[len(pref) :].strip(" :,-")
+                break
+        item = adicionar_lembrete(texto)
+        if item.get("ok"):
+            return ret(f"Lembrete salvo, chefe: {item['item'].get('texto')}", evento="reminder_add")
+        return ret("Não consegui salvar o lembrete. Me diga exatamente o que devo lembrar.", ok=False, evento="reminder_add")
+
+    if user_l in {"/lembretes", "listar lembretes", "meus lembretes"}:
+        lembretes = listar_lembretes()
+        if not lembretes:
+            return ret("Você ainda não tem lembretes salvos.")
+        linhas = []
+        for i, item in enumerate(lembretes[-12:], start=1):
+            quando = item.get("quando") or "sem horário definido"
+            linhas.append(f"{i}. {item.get('texto')} ({quando})")
+        return ret("Seus lembretes:\n" + "\n".join(linhas), evento="reminder_list")
+
+    if any(k in user_l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado financeiro"]):
+        return ret(formatar_cotacoes_humanas(cotacoes_financeiras()), evento="market")
+
+    if any(k in user_l for k in ["clima", "tempo agora", "temperatura"]):
+        cidade = ""
+        m = re.search(r"(?:em|de)\s+([a-zA-ZÀ-ÿ' -]{2,40})$", user, flags=re.IGNORECASE)
+        if m:
+            cidade = m.group(1).strip()
+        return ret(consultar_clima(cidade), evento="weather")
+
+    if user_l.startswith("/calcular ") or user_l.startswith("calcule ") or user_l.startswith("quanto e "):
+        expr = user
+        for pref in ["/calcular", "calcule", "quanto e", "quanto é"]:
+            if expr.lower().startswith(pref):
+                expr = expr[len(pref) :].strip(" =:")
+                break
+        calc = calcular_expressao(expr)
+        if calc.get("ok"):
+            return ret(f"Resultado: {calc.get('resultado')}", evento="calc")
+        pesquisa = pesquisar_na_internet(f"resolver expressão matemática: {expr}")
+        if pesquisa.get("ok"):
+            return ret(
+                "Não consegui resolver internamente com total confiança, então pesquisei para confirmar:\n"
+                + pesquisa.get("resumo", ""),
+                evento="calc",
+            )
+        return ret(
+            "Tive dúvida nesse cálculo. Se quiser, me mande a expressão com mais contexto ou me ensine como resolver esse padrão.",
+            ok=False,
+            evento="calc",
+        )
+
+    if user_l.startswith("/projeto ") or "crie um projeto" in user_l or "criar projeto" in user_l:
+        nome_projeto = ""
+        if user_l.startswith("/projeto "):
+            nome_projeto = user.split(" ", 1)[1].strip()
+        else:
+            m = re.search(r"(?:projeto|projeto chamado)\s+(.+)$", user, flags=re.IGNORECASE)
+            if m:
+                nome_projeto = m.group(1).strip(" .")
+        if len(nome_projeto) < 2:
+            return ret("Me diga o nome do projeto. Exemplo: /projeto Assistente Financeiro IA")
+        ok, payload = criar_projeto_drive(
+            nome_projeto=nome_projeto,
+            descricao=f"Projeto solicitado por {CONTEXTO.get('nome_usuario') or 'usuário'}: {nome_projeto}",
+        )
+        if ok:
+            return ret(
+                f"Projeto criado no Google Drive: {payload.get('folder_name')}.\n"
+                f"Pasta: {payload.get('folder_link') or payload.get('folder_id')}\n"
+                f"Arquivo de plano: {payload.get('file_link') or payload.get('file_id')}"
+            )
+        return ret(str(payload), ok=False, evento="drive_project")
+
+    # Orquestrador inteligente automático para perguntas mais livres.
+    orquestrado = orquestrar_consulta(user)
+    if isinstance(orquestrado, dict) and orquestrado.get("resposta"):
+        return ret(str(orquestrado.get("resposta")), evento="orchestrator")
 
     if user.startswith("/nome"):
         try:
@@ -236,61 +575,467 @@ def processar_mensagem(user):
     intencao = detectar_intencao(user, CONTEXTO)
     CONTEXTO["ultima_intencao"] = intencao
     resposta = responder(user, contexto=CONTEXTO)
+    if intencao == "saudacao":
+        partes = re.split(r"(?<=[.!?])\s+", resposta.strip())
+        if partes:
+            resposta = partes[0].strip()
+    if "não entendi" in resposta.lower() or "não consegui entender" in resposta.lower():
+        resposta += " Se quiser, me ensine essa resposta com /ensinar pergunta = resposta."
+    if any(k in user_l for k in ["programação", "programacao", "api", "agente de ia", "agentes de ia"]):
+        resposta += " Eu também posso te ajudar com programação, APIs e arquitetura de agentes de IA."
+    if "gosto" in user_l or "me adapte" in user_l or "adapt" in user_l:
+        resposta += " " + resumo_adaptacao_usuario()
+    briefing = briefing_automatico_se_necessario()
+    if briefing and intencao in {"saudacao", "ajuda"}:
+        resposta = f"{resposta}\n\n{briefing}"
     try:
-        falar(resposta)
+        perfil = atualizar_perfil_por_interacao(user, resposta)
+        resposta = aplicar_identidade_nova(
+            resposta,
+            perfil=perfil,
+            nome_usuario=CONTEXTO.get("nome_usuario", ""),
+        )
     except Exception:
         pass
+    # Evita empilhamento de saudações e respostas "coladas" em intents curtas.
+    if intencao not in {"saudacao", "agradecimento", "despedida", "continuidade", "como_esta"}:
+        try:
+            resposta = premium_personalizar_resposta(
+                CONTEXTO.get("nome_usuario", "") or "default",
+                resposta,
+            )
+        except Exception:
+            pass
+
+    # Só injeta RAG automaticamente em perguntas mais completas para não poluir respostas simples.
+    deve_consultar_rag_auto = ("?" in user) or (len(user.split()) >= 5)
+    if deve_consultar_rag_auto:
+        try:
+            rag = consultar_rag(user)
+            if rag.get("ok"):
+                fontes = ", ".join(rag.get("sources", []))
+                snippet = ""
+                snippets = rag.get("snippets", [])
+                if isinstance(snippets, list) and snippets:
+                    snippet = str(snippets[0])[:220]
+                resposta = (
+                    f"{resposta}\n\nReferências da sua base local: {fontes}\nTrecho: {snippet}"
+                )
+        except Exception:
+            pass
+    if API_TTS_SERVIDOR_ATIVO:
+        try:
+            falar(resposta)
+        except Exception:
+            pass
     return ret(resposta)
+
+
+def _json_body(handler: BaseHTTPRequestHandler):
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+        raw = handler.rfile.read(length) if length else b"{}"
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _bool_ou_none(valor):
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, str):
+        v = valor.strip().lower()
+        if v in {"true", "1", "sim", "yes", "on"}:
+            return True
+        if v in {"false", "0", "nao", "não", "no", "off"}:
+            return False
+    return None
+
+
+def _estado_admin():
+    conhecimentos = listar_aprendizados()
+    usuarios = listar_usuarios()
+    config = carregar_config_painel()
+    return {
+        "knowledge_total": len(conhecimentos),
+        "users_total": len(usuarios),
+        "knowledge": conhecimentos,
+        "users": usuarios,
+        "config": config,
+    }
 
 
 class NovaHandler(BaseHTTPRequestHandler):
     def _send_json(self, data, status=HTTPStatus.OK):
         payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
     def do_GET(self):
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        query = parse_qs(parsed.query or "")
+
+        if path == "/":
+            self._send_json(
+                {
+                    "ok": True,
+                    "status": "online",
+                    "service": "nova-api",
+                    "endpoints": ["/health", "/chat", "/market/quotes", "/weather/now"],
+                }
+            )
+            return
+        if path == "/health":
             self._send_json({"ok": True, "service": "nova-api"})
             return
-        if self.path == "/backup/export":
+        if path == "/backup/export":
             self._send_json(
                 {
                     "ok": True,
                     "backup": {
                         "memory": carregar_memoria_usuario(),
+                        "knowledge": listar_aprendizados(),
+                        "users": listar_usuarios(),
+                        "config": carregar_config_painel(),
+                        "premium_profiles": premium_exportar_perfis(),
                     },
                 }
             )
             return
+        if path == "/knowledge":
+            self._send_json(exportar_aprendizado_json())
+            return
+        if path == "/admin/users":
+            usuarios = listar_usuarios()
+            self._send_json({"ok": True, "users": usuarios, "total": len(usuarios)})
+            return
+        if path == "/admin/config":
+            self._send_json({"ok": True, "config": carregar_config_painel()})
+            return
+        if path == "/admin/state":
+            self._send_json({"ok": True, "state": _estado_admin()})
+            return
+        if path == "/insights/profile":
+            self._send_json({"ok": True, "profile": carregar_perfil()})
+            return
+        if path == "/insights/metrics":
+            self._send_json({"ok": True, "metrics": resumo_metricas()})
+            return
+        if path == "/insights/resources":
+            self._send_json({"ok": True, "resources": resumo_metricas_recursos()})
+            return
+        if path == "/insights/alerts":
+            self._send_json({"ok": True, "alerts": gerar_alertas_recomendacoes()})
+            return
+        if path == "/premium/profile":
+            user_id = (query.get("user_id", ["default"])[0] or "default").strip()
+            self._send_json({"ok": True, "profile": premium_obter_perfil(user_id)})
+            return
+        if path == "/security/audit":
+            self._send_json({"ok": True, "audit": executar_auditoria_seguranca()})
+            return
+        if path == "/security/audit/history":
+            try:
+                limit = int((query.get("limit", ["30"])[0] or "30").strip())
+            except Exception:
+                limit = 30
+            self._send_json({"ok": True, "items": obter_historico_auditoria(limit=limit)})
+            return
+        if path == "/assistant/briefing":
+            cidade = (query.get("city", [""])[0] or "").strip()
+            self._send_json({"ok": True, "briefing": gerar_briefing_proativo(cidade)})
+            return
+        if path == "/market/quotes":
+            cotacoes = cotacoes_financeiras()
+            self._send_json({"ok": cotacoes.get("ok") is True, "quotes": cotacoes})
+            return
+        if path == "/weather/now":
+            cidade = (query.get("city", [""])[0] or "").strip()
+            self._send_json({"ok": True, "summary": consultar_clima(cidade)})
+            return
+        if path == "/reminders":
+            lembretes = listar_lembretes()
+            self._send_json({"ok": True, "items": lembretes, "total": len(lembretes)})
+            return
+        if path == "/automation/rules":
+            rules = listar_rotinas()
+            self._send_json({"ok": True, "rules": rules, "total": len(rules)})
+            return
+
         self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
-            body = json.loads(raw.decode("utf-8"))
-        except Exception:
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        body = _json_body(self)
+        if body is None:
             self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        if self.path == "/chat":
+        if path == "/chat":
             message = str(body.get("message", "")).strip()
             reply = processar_mensagem(message)
             self._send_json({"ok": True, "reply": reply})
             return
 
-        if self.path == "/backup/restore":
+        if path == "/backup/restore":
             backup = body.get("backup", {})
             memory = backup.get("memory", {}) if isinstance(backup, dict) else {}
             if not isinstance(memory, dict):
                 self._send_json({"ok": False, "error": "invalid_backup"}, status=HTTPStatus.BAD_REQUEST)
                 return
             salvar_memoria_usuario(memory)
+            if isinstance(backup, dict):
+                if isinstance(backup.get("knowledge"), list):
+                    from core.aprendizado_admin import salvar_base_aprendizado
+
+                    salvar_base_aprendizado(backup.get("knowledge", []))
+                if isinstance(backup.get("users"), list):
+                    from core.seguranca import salvar_json_seguro
+                    from core.painel_admin import ARQUIVO_USUARIOS
+
+                    salvar_json_seguro(ARQUIVO_USUARIOS, backup.get("users"))
+                if isinstance(backup.get("config"), dict):
+                    atualizar_config_painel(**backup.get("config", {}))
+                if isinstance(backup.get("premium_profiles"), dict):
+                    premium_importar_perfis(backup.get("premium_profiles"))
             self._send_json({"ok": True, "restored": True})
+            return
+
+        if path == "/premium/profile":
+            user_id = str(body.get("user_id", "default")).strip() or "default"
+            profile = body.get("profile", {})
+            if not isinstance(profile, dict):
+                self._send_json({"ok": False, "error": "invalid_profile"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"ok": True, "profile": premium_atualizar_perfil(user_id, profile)})
+            return
+
+        if path == "/rag/index":
+            paths = body.get("paths")
+            lst = paths if isinstance(paths, list) else None
+            out = reindexar_documentos(lst)
+            self._send_json({"ok": True, "result": out})
+            return
+
+        if path == "/rag/query":
+            pergunta = str(body.get("query", "")).strip()
+            out = consultar_rag(pergunta)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json({"ok": out.get("ok") is True, "result": out}, status=status)
+            return
+
+        if path == "/automation/rules":
+            try:
+                rule = adicionar_rotina(
+                    gatilho=str(body.get("trigger", "")),
+                    acao_tipo=str(body.get("action_type", "")),
+                    acao_valor=str(body.get("action_value", "")),
+                    sensivel=bool(body.get("sensitive", False)),
+                )
+                self._send_json({"ok": True, "rule": rule, "rules": listar_rotinas()})
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/knowledge":
+            gatilho = str(body.get("gatilho", "")).strip()
+            resposta = str(body.get("resposta", "")).strip()
+            categoria = str(body.get("categoria", "geral")).strip() or "geral"
+            if not gatilho or not resposta:
+                self._send_json({"ok": False, "error": "invalid_payload"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            salvar_aprendizado_painel(gatilho, resposta, categoria=categoria)
+            self._send_json(exportar_aprendizado_json())
+            return
+
+        if path == "/admin/users":
+            nome = str(body.get("nome", "")).strip()
+            papel = str(body.get("papel", "usuario")).strip() or "usuario"
+            try:
+                user = adicionar_usuario(nome, papel=papel)
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"ok": True, "user": user, "users": listar_usuarios()})
+            return
+
+        if path == "/admin/config":
+            campos = {}
+            if "voz_ativa" in body:
+                campos["voz_ativa"] = _bool_ou_none(body.get("voz_ativa"))
+            if "voice_neural_hybrid" in body:
+                campos["voice_neural_hybrid"] = _bool_ou_none(body.get("voice_neural_hybrid"))
+            if "voice_profile" in body:
+                campos["voice_profile"] = body.get("voice_profile")
+            if "escuta_ativa" in body:
+                campos["escuta_ativa"] = _bool_ou_none(body.get("escuta_ativa"))
+            if "wake_word" in body:
+                campos["wake_word"] = body.get("wake_word")
+            if "continuous_wake" in body:
+                campos["continuous_wake"] = _bool_ou_none(body.get("continuous_wake"))
+            if "allow_voice_on_lock" in body:
+                campos["allow_voice_on_lock"] = _bool_ou_none(body.get("allow_voice_on_lock"))
+            if "admin_guard" in body:
+                campos["admin_guard"] = _bool_ou_none(body.get("admin_guard"))
+            if "telegram_ativo" in body:
+                campos["telegram_ativo"] = _bool_ou_none(body.get("telegram_ativo"))
+            if "telegram_token" in body:
+                campos["telegram_token"] = body.get("telegram_token")
+            if "telegram_chat_id" in body:
+                campos["telegram_chat_id"] = body.get("telegram_chat_id")
+            config = atualizar_config_painel(**campos)
+            self._send_json({"ok": True, "config": config})
+            return
+
+        if path == "/telegram/send":
+            mensagem = str(body.get("message", "")).strip()
+            config = carregar_config_painel()
+            if not config.get("telegram_ativo"):
+                self._send_json({"ok": False, "error": "telegram_disabled"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            ok, msg = enviar_mensagem_telegram(
+                token=str(config.get("telegram_token", "")),
+                chat_id=str(config.get("telegram_chat_id", "")),
+                mensagem=mensagem,
+            )
+            status = HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST
+            self._send_json({"ok": ok, "message": msg}, status=status)
+            return
+
+        if path == "/search/web":
+            consulta = str(body.get("query", "")).strip()
+            if not consulta:
+                self._send_json({"ok": False, "error": "query_required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            resultado = pesquisar_na_internet(consulta)
+            self._send_json(
+                {
+                    "ok": resultado.get("ok") is True,
+                    "summary": resultado.get("resumo", ""),
+                    "sources": resultado.get("fontes", []),
+                }
+            )
+            return
+
+        if path == "/insights/feedback":
+            try:
+                score = int(body.get("score", 5))
+            except Exception:
+                score = 5
+            comentario = str(body.get("comment", "")).strip()
+            out = registrar_feedback(score, comentario=comentario)
+            self._send_json(out)
+            return
+
+        if path == "/reminders":
+            texto = str(body.get("text", "")).strip()
+            quando = str(body.get("when", "")).strip()
+            item = adicionar_lembrete(texto, quando=quando)
+            status = HTTPStatus.OK if item.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(item, status=status)
+            return
+
+        if path == "/project/create":
+            nome = str(body.get("name", "")).strip()
+            descricao = str(body.get("description", "")).strip()
+            ok, payload = criar_projeto_drive(nome, descricao)
+            status = HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST
+            self._send_json({"ok": ok, "project": payload if ok else None, "error": None if ok else payload}, status=status)
+            return
+
+        if path == "/voice/neural":
+            texto = str(body.get("text", "")).strip()
+            perfil = str(body.get("voice_profile", "feminina")).strip()
+            out = sintetizar_neural_base64(texto, perfil=perfil)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
+            return
+
+        self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        body = _json_body(self)
+        if body is None:
+            self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        if path.startswith("/knowledge/"):
+            item_id = path.split("/")[-1]
+            item = atualizar_aprendizado(
+                item_id=item_id,
+                gatilho=body.get("gatilho"),
+                resposta=body.get("resposta"),
+                categoria=body.get("categoria"),
+                ativo=_bool_ou_none(body.get("ativo")),
+            )
+            if not item:
+                self._send_json({"ok": False, "error": "knowledge_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"ok": True, "item": item})
+            return
+
+        if path.startswith("/admin/users/"):
+            user_id = path.split("/")[-1]
+            user = atualizar_usuario(
+                user_id=user_id,
+                nome=body.get("nome"),
+                papel=body.get("papel"),
+                ativo=_bool_ou_none(body.get("ativo")),
+            )
+            if not user:
+                self._send_json({"ok": False, "error": "user_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"ok": True, "user": user, "users": listar_usuarios()})
+            return
+
+        self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+
+        if path.startswith("/knowledge/"):
+            item_id = path.split("/")[-1]
+            ok = remover_aprendizado(item_id)
+            if not ok:
+                self._send_json({"ok": False, "error": "knowledge_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"ok": True, "removed": True, "items": listar_aprendizados()})
+            return
+
+        if path.startswith("/admin/users/"):
+            user_id = path.split("/")[-1]
+            ok = remover_usuario(user_id)
+            if not ok:
+                self._send_json({"ok": False, "error": "user_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"ok": True, "removed": True, "users": listar_usuarios()})
+            return
+
+        if path.startswith("/automation/rules/"):
+            rule_id = path.split("/")[-1]
+            ok = remover_rotina(rule_id)
+            if not ok:
+                self._send_json({"ok": False, "error": "rule_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"ok": True, "removed": True, "rules": listar_rotinas()})
             return
 
         self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
