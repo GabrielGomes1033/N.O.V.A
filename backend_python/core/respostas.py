@@ -6,17 +6,19 @@ import random
 import re
 import unicodedata
 
-from core.caminhos import pasta_dados_app
+from core.aprendizado_admin import (
+    buscar_resposta_aprendida as buscar_resposta_aprendida_v2,
+    carregar_aprendizado_legado,
+    salvar_aprendizado as salvar_aprendizado_v2,
+)
 from core.personalidade import estilizar
-from core.seguranca import carregar_json_seguro, salvar_json_seguro
 
 
 # Arquivos usados pelo motor:
 # - modos.txt: respostas prontas organizadas por personalidade
 # - aprendizado.json: respostas ensinadas pelo usuário durante o uso
 ARQUIVO_MODOS = Path(__file__).with_name("modos.txt")
-ARQUIVO_APRENDIZADO = pasta_dados_app() / "aprendizado.json"
-ARQUIVO_APRENDIZADO_LEGADO = Path(__file__).with_name("aprendizado.json")
+ARQUIVO_APRENDIZADO = Path(__file__).with_name("aprendizado.json")
 
 # Mapa de intenções com exemplos de frases que representam cada tema.
 INTENCOES = {
@@ -373,53 +375,13 @@ def carregar_respostas(arquivo=ARQUIVO_MODOS, modo="normal"):
 
 
 def carregar_aprendizado(arquivo=ARQUIVO_APRENDIZADO):
-    # Carrega os conhecimentos ensinados pelo usuário.
-    # Se o arquivo estiver ausente ou inválido, retorna memória vazia.
-    caminho = Path(arquivo)
-    if not caminho.is_file():
-        if Path(arquivo) == ARQUIVO_APRENDIZADO and ARQUIVO_APRENDIZADO_LEGADO.is_file():
-            dados_legados = carregar_json_seguro(ARQUIVO_APRENDIZADO_LEGADO, {})
-            if not isinstance(dados_legados, dict):
-                return {}
-            salvar_json_seguro(caminho, dados_legados)
-        else:
-            return {}
-
-    dados = carregar_json_seguro(caminho, {})
-    if not isinstance(dados, dict):
-        return {}
-
-    aprendizado = {}
-    for pergunta, respostas in dados.items():
-        chave = normalizar_texto(pergunta)
-        if isinstance(respostas, list):
-            itens = [str(item).strip() for item in respostas if str(item).strip()]
-        elif isinstance(respostas, str) and respostas.strip():
-            itens = [respostas.strip()]
-        else:
-            itens = []
-        if chave and itens:
-            aprendizado[chave] = itens
-    return aprendizado
+    # Mantém compatibilidade com chamadas antigas retornando mapa pergunta->respostas.
+    return carregar_aprendizado_legado()
 
 
 def salvar_aprendizado(pergunta, resposta, arquivo=ARQUIVO_APRENDIZADO):
-    # Salva uma nova associação pergunta -> resposta.
-    # A mesma pergunta pode ter várias respostas alternativas.
-    chave = normalizar_texto(pergunta)
-    resposta = resposta.strip()
-    if not chave or not resposta:
-        raise ValueError("Pergunta e resposta precisam estar preenchidas.")
-
-    dados = carregar_aprendizado(arquivo)
-    respostas = dados.setdefault(chave, [])
-    if resposta not in respostas:
-        respostas.append(resposta)
-
-    caminho = Path(arquivo)
-    salvar_json_seguro(caminho, dados)
-
-    return len(respostas)
+    # Compatível com API antiga; grava no novo formato editável.
+    return salvar_aprendizado_v2(pergunta=pergunta, resposta=resposta, categoria="geral")
 
 
 def detectar_intencao(msg, contexto=None):
@@ -488,37 +450,17 @@ def detectar_intencao_por_similaridade(texto):
 
 
 def buscar_resposta_aprendida(msg, arquivo=ARQUIVO_APRENDIZADO):
-    # Procura primeiro nas respostas ensinadas pelo usuário.
-    # Aceita tanto igualdade exata quanto ocorrência da pergunta dentro da frase.
-    texto = normalizar_texto(msg)
-    aprendizado = carregar_aprendizado(arquivo)
-
-    if texto in aprendizado:
-        return random.choice(aprendizado[texto])
-
-    for pergunta, respostas in aprendizado.items():
-        if pergunta and pergunta in texto:
-            return random.choice(respostas)
-
-    return None
+    # Consulta a base editável de aprendizado.
+    return buscar_resposta_aprendida_v2(msg)
 
 
 def resposta_desconhecida_mais_humana(msg):
     # Gera respostas mais naturais quando a intenção não fica clara.
-    texto = normalizar_texto(msg)
-    idioma = detectar_idioma_simples(msg)
-
     if "?" in msg:
         opcoes = [
             "Quase entendi sua pergunta, mas ainda ficou um pouco vaga para mim. Pode reformular de outro jeito?",
             "Não peguei totalmente o que você quis perguntar. Se quiser, tenta escrever com outras palavras.",
             "Ainda não consegui entender essa pergunta por completo. Pode me dar mais contexto?",
-        ]
-    elif idioma in {"en", "es"} or any(palavra in texto for palavra in ("hello", "hi", "hola", "buenos", "gracias", "thanks")):
-        opcoes = [
-            "Eu também consigo conversar em inglês e espanhol, mas nessa frase ainda não entendi bem a intenção. Tenta me perguntar de outro jeito.",
-            "Entendi que você falou em outro idioma, mas ainda não captei o sentido completo. Pode reformular para mim?",
-            "Posso lidar com português, inglês e espanhol, só preciso que você escreva essa ideia de um jeito um pouco mais direto.",
         ]
     else:
         opcoes = [
@@ -532,8 +474,7 @@ def resposta_desconhecida_mais_humana(msg):
 
 def responder_com_contexto(intencao, respostas, msg, contexto):
     # Gera respostas mais naturais quando existe contexto recente de conversa.
-    idioma_detectado = detectar_idioma_simples(msg)
-    idioma = idioma_detectado if idioma_detectado in {"en", "es"} else (contexto.get("idioma_preferido") or idioma_detectado)
+    idioma = "pt"
     nome_usuario = contexto.get("nome_usuario")
     tratamento = contexto.get("tratamento")
     identificador_usuario = tratamento or nome_usuario
@@ -577,27 +518,11 @@ def responder_com_contexto(intencao, respostas, msg, contexto):
         )
 
     if intencao == "idioma":
-        if idioma == "en":
-            return random.choice(
-                [
-                    "Yes, I can understand simple questions in English, Spanish and Portuguese.",
-                    "I can chat with you in Portuguese, English and Spanish, especially in simple everyday questions.",
-                    "I do handle English and Spanish too, and I can keep the conversation more natural when you write that way.",
-                ]
-            )
-        if idioma == "es":
-            return random.choice(
-                [
-                    "Sí, puedo entender preguntas simples en español, portugués e inglés.",
-                    "Puedo conversar contigo en español, portugués e inglés, sobre todo en preguntas cotidianas.",
-                    "Sí, también hablo español a un nivel simple y natural dentro de la conversación.",
-                ]
-            )
         return random.choice(
             [
-                f"Consigo conversar em português, inglês e espanhol em perguntas e interações mais comuns, {identificador_usuario}." if identificador_usuario else "Consigo conversar em português, inglês e espanhol em perguntas e interações mais comuns.",
-                "Sim. Eu entendo português, inglês e espanhol, principalmente em conversas simples do dia a dia.",
-                "Posso falar com você nesses três idiomas, e estou ficando mais natural conforme você conversa comigo.",
+                f"Vou responder sempre em português, {identificador_usuario}, para manter naturalidade e consistência." if identificador_usuario else "Vou responder sempre em português, para manter naturalidade e consistência.",
+                "Posso entender termos em outros idiomas, mas minha resposta padrão vai ficar em português.",
+                "Para sua experiência ficar estável, mantenho as respostas em português mesmo quando a pergunta vier em outro idioma.",
             ]
         )
 

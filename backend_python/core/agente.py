@@ -183,10 +183,6 @@ def eh_pedido_de_agente(texto):
         "planejar",
         "organize",
         "organizar",
-        "pesquise",
-        "pesquisar",
-        "resuma",
-        "resumir",
         "meta",
         "objetivo",
         "mercado",
@@ -322,11 +318,16 @@ def executar_agente(objetivo, contexto=None):
     }
     _salvar_historico_registro(registro)
 
-    cabecalho = "Plano de ação (JARVIS fase 1):" + "".join(
-        f"\n{i}. {p.descricao} [{p.status}]" for i, p in enumerate(plano, start=1)
-    )
-    corpo = "\n".join(f"- {item}" for item in observacoes)
-    mensagem = f"{cabecalho}\n\nObservações:\n{corpo}" if corpo else cabecalho
+    if confirmacao:
+        mensagem = observacoes[-1] if observacoes else "Preciso da sua confirmação para continuar."
+    else:
+        limpas = [str(x).strip() for x in observacoes if str(x).strip()]
+        if not limpas:
+            mensagem = "Concluí a solicitação."
+        elif len(limpas) == 1:
+            mensagem = limpas[0]
+        else:
+            mensagem = "Aqui está o que fiz:\n" + "\n".join(f"- {x}" for x in limpas[:4])
     return {"mensagem": mensagem, "confirmacao_pendente": confirmacao, "plano": plano}
 
 

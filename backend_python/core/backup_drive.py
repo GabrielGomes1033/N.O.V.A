@@ -196,3 +196,57 @@ def restaurar_backup_drive():
         return True, "Backup remoto restaurado para a memória da NOVA."
     except Exception as exc:
         return False, f"Falha ao restaurar backup do Drive: {exc}"
+
+
+def criar_projeto_drive(nome_projeto: str, descricao: str):
+    service = _drive_service()
+    if service is None:
+        return False, "Drive não configurado ou indisponível."
+
+    nome = (nome_projeto or "").strip()
+    if len(nome) < 2:
+        return False, "Nome do projeto precisa ter ao menos 2 caracteres."
+
+    descricao = (descricao or "").strip() or "Projeto criado pela NOVA."
+
+    try:
+        pasta_meta = {
+            "name": nome,
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+        pasta_pai = _backup_folder_id()
+        if pasta_pai:
+            pasta_meta["parents"] = [pasta_pai]
+
+        pasta = service.files().create(body=pasta_meta, fields="id,name,webViewLink").execute()
+        pasta_id = pasta.get("id")
+
+        conteudo = (
+            f"Projeto: {nome}\n"
+            f"Criado em: {datetime.now().isoformat(timespec='seconds')}\n\n"
+            f"Descrição inicial:\n{descricao}\n\n"
+            "Plano sugerido pela NOVA:\n"
+            "1. Definir objetivo e escopo\n"
+            "2. Escolher stack e arquitetura\n"
+            "3. Implementar MVP\n"
+            "4. Validar com testes\n"
+            "5. Evoluir por iterações\n"
+        ).encode("utf-8")
+
+        media = MediaIoBaseUpload(io.BytesIO(conteudo), mimetype="text/plain", resumable=False)
+        arquivo_meta = {
+            "name": "plano_projeto.txt",
+            "mimeType": "text/plain",
+            "parents": [pasta_id],
+        }
+        arquivo = service.files().create(body=arquivo_meta, media_body=media, fields="id,webViewLink").execute()
+
+        return True, {
+            "folder_id": pasta_id,
+            "folder_name": pasta.get("name"),
+            "folder_link": pasta.get("webViewLink"),
+            "file_id": arquivo.get("id"),
+            "file_link": arquivo.get("webViewLink"),
+        }
+    except Exception as exc:
+        return False, f"Falha ao criar projeto no Drive: {exc}"
