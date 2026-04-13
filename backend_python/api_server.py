@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -488,7 +488,56 @@ def processar_mensagem(user):
             if texto.lower().startswith(pref):
                 texto = texto[len(pref) :].strip(" :,-")
                 break
-        item = adicionar_lembrete(texto)
+        def _parse_quando(frase: str) -> str:
+            f = (frase or "").strip()
+            now = datetime.now()
+
+            m_iso = re.search(r"\b(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})\b", f)
+            if m_iso:
+                dt = datetime.strptime(f"{m_iso.group(1)} {m_iso.group(2)}", "%Y-%m-%d %H:%M")
+                return dt.isoformat(timespec="minutes")
+
+            m_br = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2,4})\s+(\d{1,2}:\d{2})\b", f)
+            if m_br:
+                d = m_br.group(1).split("/")
+                dd, mm = int(d[0]), int(d[1])
+                yy = int(d[2]) if len(d[2]) == 4 else int(f"20{d[2]}")
+                dt = datetime.strptime(f"{yy:04d}-{mm:02d}-{dd:02d} {m_br.group(2)}", "%Y-%m-%d %H:%M")
+                return dt.isoformat(timespec="minutes")
+
+            m_amanha = re.search(r"\bamanh[ãa]\b.*?\b(\d{1,2}:\d{2})\b", f, flags=re.IGNORECASE)
+            if m_amanha:
+                dt = (now + timedelta(days=1)).replace(
+                    hour=int(m_amanha.group(1).split(":")[0]),
+                    minute=int(m_amanha.group(1).split(":")[1]),
+                    second=0,
+                    microsecond=0,
+                )
+                return dt.isoformat(timespec="minutes")
+
+            m_hoje = re.search(r"\bhoje\b.*?\b(\d{1,2}:\d{2})\b", f, flags=re.IGNORECASE)
+            if m_hoje:
+                hh, mi = [int(x) for x in m_hoje.group(1).split(":")]
+                dt = now.replace(hour=hh, minute=mi, second=0, microsecond=0)
+                return dt.isoformat(timespec="minutes")
+
+            m_hora = re.search(r"\b(\d{1,2}:\d{2})\b", f)
+            if m_hora:
+                hh, mi = [int(x) for x in m_hora.group(1).split(":")]
+                dt = now.replace(hour=hh, minute=mi, second=0, microsecond=0)
+                if dt <= now:
+                    dt = dt + timedelta(days=1)
+                return dt.isoformat(timespec="minutes")
+            return ""
+
+        quando = _parse_quando(texto)
+        if not quando:
+            return ret(
+                "Para criar lembrete com notificação, me diga data e hora. Ex: '/lembrar pagar conta 13/04/2026 09:30'.",
+                ok=False,
+                evento="reminder_add",
+            )
+        item = adicionar_lembrete(texto, quando=quando)
         if item.get("ok"):
             return ret(f"Lembrete salvo, chefe: {item['item'].get('texto')}", evento="reminder_add")
         return ret("Não consegui salvar o lembrete. Me diga exatamente o que devo lembrar.", ok=False, evento="reminder_add")
@@ -601,13 +650,8 @@ def processar_mensagem(user):
         else:
             saud = "Boa noite"
         nome = (CONTEXTO.get("nome_usuario") or memoria.get("nome_usuario") or "").strip()
-        local = (memoria.get("ultima_localizacao") or "").strip()
-        if nome and local:
-            resposta = f"{saud}, {nome}. Como posso ajudar você aí em {local}?"
-        elif nome:
+        if nome:
             resposta = f"{saud}, {nome}. Como posso ajudar você agora?"
-        elif local:
-            resposta = f"{saud}. Como posso ajudar você aí em {local}?"
         else:
             resposta = f"{saud}. Como posso ajudar você agora?"
     if "não entendi" in resposta.lower() or "não consegui entender" in resposta.lower():
@@ -1137,6 +1181,20 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/reminders":
             texto = str(body.get("text", "")).strip()
             quando = str(body.get("when", "")).strip()
+            if not quando:
+                self._send_json(
+                    {"ok": False, "error": "when_required", "message": "Informe data/hora para o lembrete."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            try:
+                datetime.fromisoformat(quando.replace("Z", "+00:00"))
+            except Exception:
+                self._send_json(
+                    {"ok": False, "error": "when_invalid", "message": "Formato de data/hora inválido."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
             item = adicionar_lembrete(texto, quando=quando)
             status = HTTPStatus.OK if item.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json(item, status=status)

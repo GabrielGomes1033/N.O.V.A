@@ -93,9 +93,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   String _initialGreeting() {
     final base = '${_periodGreeting()}! Eu sou a NOVA.';
-    if (_locationLabel != 'Localização não definida') {
-      return '$base Aqui em $_locationLabel, pronta para te ajudar.';
-    }
     return '$base Estou aqui, pronta para aprender com você e te ajudar.';
   }
 
@@ -375,6 +372,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final items = await _api.getReminders();
       if (!mounted) return;
       setState(() => _reminders = items);
+      await _syncReminderNotifications(items);
       try {
         await _localDb.saveReminders(items);
       } catch (_) {
@@ -388,8 +386,51 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final localItems = await _localDb.getReminders();
       if (!mounted) return;
       setState(() => _reminders = localItems);
+      await _syncReminderNotifications(localItems);
     } catch (_) {
       // mantém último estado em memória
+    }
+  }
+
+  int _notificationIdFromReminderId(String id) {
+    var hash = 0;
+    for (final code in id.codeUnits) {
+      hash = ((hash * 31) + code) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
+  }
+
+  DateTime? _parseReminderWhen(String raw) {
+    final txt = raw.trim();
+    if (txt.isEmpty) return null;
+    try {
+      return DateTime.parse(txt).toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _syncReminderNotifications(List<Map<String, dynamic>> items) async {
+    for (final item in items) {
+      final id = (item['id'] ?? '').toString().trim();
+      final texto = (item['texto'] ?? '').toString().trim();
+      final whenRaw = (item['quando'] ?? '').toString();
+      if (id.isEmpty || texto.isEmpty) continue;
+      final when = _parseReminderWhen(whenRaw);
+      if (when == null) continue;
+      final now = DateTime.now();
+      if (!when.isAfter(now)) continue;
+      final notifId = _notificationIdFromReminderId(id);
+      try {
+        await _notifications.scheduleReminder(
+          id: notifId,
+          title: 'Lembrete da NOVA',
+          body: texto,
+          when: when,
+        );
+      } catch (_) {
+        // segue sem interromper UX
+      }
     }
   }
 
@@ -1527,6 +1568,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             Future<void> addReminder() async {
               final text = textController.text.trim();
               if (text.isEmpty) return;
+              if (selectedDateTime == null) {
+                _showSnack('Defina data e hora para o lembrete.');
+                return;
+              }
               final whenIso = selectedDateTime?.toIso8601String() ?? '';
               try {
                 Map<String, dynamic>? createdItem;
@@ -1559,15 +1604,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 if (!synced && !localSaved) {
                   throw Exception('local_reminder_save_failed');
                 }
-                if (selectedDateTime != null) {
-                  final id = DateTime.now().millisecondsSinceEpoch % 2147483647;
-                  await _notifications.scheduleReminder(
-                    id: id,
-                    title: 'Lembrete da NOVA',
-                    body: text,
-                    when: selectedDateTime!,
-                  );
-                }
+                final notifId = _notificationIdFromReminderId(
+                  (createdItem['id'] ?? '').toString(),
+                );
+                await _notifications.scheduleReminder(
+                  id: notifId,
+                  title: 'Lembrete da NOVA',
+                  body: text,
+                  when: selectedDateTime!,
+                );
                 textController.clear();
                 selectedDateTime = null;
                 await _loadReminders();
