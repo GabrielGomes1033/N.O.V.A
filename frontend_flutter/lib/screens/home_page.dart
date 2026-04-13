@@ -373,17 +373,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _loadReminders() async {
     try {
       final items = await _api.getReminders();
-      await _localDb.saveReminders(items);
       if (!mounted) return;
       setState(() => _reminders = items);
-    } catch (_) {
       try {
-        final localItems = await _localDb.getReminders();
-        if (!mounted) return;
-        setState(() => _reminders = localItems);
+        await _localDb.saveReminders(items);
       } catch (_) {
-        // mantém último estado em memória
+        // Em plataformas sem DB local (ex.: web), mantém dados do backend.
       }
+      return;
+    } catch (_) {
+      // fallback local apenas se backend falhar
+    }
+    try {
+      final localItems = await _localDb.getReminders();
+      if (!mounted) return;
+      setState(() => _reminders = localItems);
+    } catch (_) {
+      // mantém último estado em memória
     }
   }
 
@@ -1543,7 +1549,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   'feito': false,
                 };
 
-                await _localDb.upsertReminder(createdItem);
+                bool localSaved = false;
+                try {
+                  await _localDb.upsertReminder(createdItem);
+                  localSaved = true;
+                } catch (_) {
+                  localSaved = false;
+                }
+                if (!synced && !localSaved) {
+                  throw Exception('local_reminder_save_failed');
+                }
                 if (selectedDateTime != null) {
                   final id = DateTime.now().millisecondsSinceEpoch % 2147483647;
                   await _notifications.scheduleReminder(
