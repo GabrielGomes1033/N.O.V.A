@@ -318,4 +318,72 @@ class ChatApiService {
       },
     );
   }
+
+  Future<Map<String, dynamic>> getObservabilitySummary({
+    int window = 200,
+  }) async {
+    final win = window.clamp(1, 500);
+    final payload = await _requestJson('GET', '/observability/summary?window=$win');
+    final summary = payload['summary'];
+    if (summary is Map<String, dynamic>) return summary;
+    if (summary is Map) return Map<String, dynamic>.from(summary);
+    return {};
+  }
+
+  Future<List<Map<String, dynamic>>> getObservabilityTraces({
+    int limit = 120,
+  }) async {
+    final lim = limit.clamp(1, 500);
+    final payload = await _requestJson('GET', '/observability/traces?limit=$lim');
+    final items = payload['items'];
+    if (items is! List) return [];
+    return items
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> agentPlan(String objective) {
+    return _requestJson(
+      'POST',
+      '/agent/plan',
+      body: {'objective': objective},
+    );
+  }
+
+  Future<Map<String, dynamic>> agentExecute(String objective) {
+    return _requestJson(
+      'POST',
+      '/agent/execute',
+      body: {'objective': objective},
+    );
+  }
+
+  Future<Map<String, dynamic>> ragQuery(String query) {
+    return _requestJson(
+      'POST',
+      '/rag/query',
+      body: {'query': query},
+    );
+  }
+
+  Future<Map<String, dynamic>> ragFeedback({
+    required String query,
+    required String chunkId,
+    required int score,
+  }) {
+    return _requestJson(
+      'POST',
+      '/rag/feedback',
+      body: {
+        'query': query,
+        'chunk_id': chunkId,
+        'score': score,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> ragFeedbackStats() {
+    return _requestJson('GET', '/rag/feedback/stats');
+  }
 }

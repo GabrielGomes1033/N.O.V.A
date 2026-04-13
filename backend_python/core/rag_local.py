@@ -13,6 +13,7 @@ from core.seguranca import carregar_json_seguro, salvar_json_seguro
 
 PASTA_DOCS = pasta_dados_app() / "rag_docs"
 ARQUIVO_INDEX = pasta_dados_app() / "rag_index.json"
+ARQUIVO_FEEDBACK = pasta_dados_app() / "rag_feedback.json"
 
 
 @dataclass
@@ -24,6 +25,10 @@ class Chunk:
 
 def _padrao_index() -> dict:
     return {"version": 1, "chunks": [], "updated_at": ""}
+
+
+def _padrao_feedback() -> dict:
+    return {"version": 1, "chunk_scores": {}, "query_feedback": []}
 
 
 def _tokenize(txt: str) -> list[str]:
@@ -117,6 +122,60 @@ def _load_index() -> dict:
     return raw
 
 
+def _load_feedback() -> dict:
+    raw = carregar_json_seguro(ARQUIVO_FEEDBACK, _padrao_feedback())
+    if not isinstance(raw, dict):
+        return _padrao_feedback()
+    if not isinstance(raw.get("chunk_scores"), dict):
+        raw["chunk_scores"] = {}
+    if not isinstance(raw.get("query_feedback"), list):
+        raw["query_feedback"] = []
+    return raw
+
+
+def registrar_feedback_rag(query: str, chunk_id: str, score: int = 1) -> dict:
+    q = (query or "").strip()
+    cid = (chunk_id or "").strip()
+    nota = max(-1, min(1, int(score)))
+    if not q or not cid:
+        return {"ok": False, "error": "payload_invalido"}
+
+    fb = _load_feedback()
+    chunk_scores = fb.get("chunk_scores", {})
+    atual = int(chunk_scores.get(cid, 0))
+    chunk_scores[cid] = max(-10, min(20, atual + nota))
+    fb["chunk_scores"] = chunk_scores
+
+    trilha = fb.get("query_feedback", [])
+    trilha.append(
+        {
+            "time": datetime.now().isoformat(timespec="seconds"),
+            "query": q[:240],
+            "chunk_id": cid,
+            "score": nota,
+        }
+    )
+    fb["query_feedback"] = trilha[-600:]
+    salvar_json_seguro(ARQUIVO_FEEDBACK, fb)
+    return {"ok": True, "chunk_id": cid, "score_aplicado": nota, "score_total_chunk": chunk_scores[cid]}
+
+
+def estatisticas_feedback_rag() -> dict:
+    fb = _load_feedback()
+    chunk_scores = fb.get("chunk_scores", {})
+    trilha = fb.get("query_feedback", [])
+    return {
+        "ok": True,
+        "chunks_com_feedback": len(chunk_scores),
+        "eventos_feedback": len(trilha) if isinstance(trilha, list) else 0,
+        "top_chunks": sorted(
+            [{"chunk_id": k, "score": int(v)} for k, v in chunk_scores.items()],
+            key=lambda x: x["score"],
+            reverse=True,
+        )[:10],
+    }
+
+
 def consultar_rag(pergunta: str, top_k: int = 3) -> dict:
     pergunta = (pergunta or "").strip()
     if len(pergunta) < 3:
@@ -130,6 +189,9 @@ def consultar_rag(pergunta: str, top_k: int = 3) -> dict:
     q_tokens = _tokenize(pergunta)
     if not q_tokens:
         return {"ok": False, "error": "tokens_vazios"}
+
+    feedback = _load_feedback()
+    bonus_chunks = feedback.get("chunk_scores", {})
 
     scores: list[tuple[float, dict]] = []
     q_set = set(q_tokens)
@@ -146,6 +208,10 @@ def consultar_rag(pergunta: str, top_k: int = 3) -> dict:
         if overlap <= 0:
             continue
         score = overlap / math.sqrt(len(tks) + 1)
+        cid = str(c.get("id", "")).strip()
+        if cid and cid in bonus_chunks:
+            # Bônus pequeno para aprender relevância sem distorcer totalmente a busca.
+            score += float(bonus_chunks.get(cid, 0)) * 0.08
         scores.append((score, c))
 
     if not scores:
@@ -156,6 +222,14 @@ def consultar_rag(pergunta: str, top_k: int = 3) -> dict:
 
     fontes = sorted(set(str(i.get("source", "")) for i in top if i.get("source")))
     trechos = [str(i.get("text", "")).strip()[:280] for i in top]
+    trecho_items = [
+        {
+            "id": str(i.get("id", "")).strip(),
+            "source": str(i.get("source", "")).strip(),
+            "text": str(i.get("text", "")).strip()[:320],
+        }
+        for i in top
+    ]
     resumo = " ".join(trechos)
 
     return {
@@ -163,4 +237,5 @@ def consultar_rag(pergunta: str, top_k: int = 3) -> dict:
         "answer": resumo[:1200],
         "sources": fontes,
         "snippets": trechos,
+        "snippet_items": trecho_items,
     }

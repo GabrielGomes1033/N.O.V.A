@@ -24,7 +24,7 @@ from core.admin import (
     rotacionar_segredo_2fa,
     status_admin,
 )
-from core.agente import eh_pedido_de_agente, executar_agente, processar_confirmacao_agente
+from core.agente import eh_pedido_de_agente, executar_agente, processar_confirmacao_agente, planejar_objetivo
 from core.despertador import (
     configurar_despertador,
     desativar_despertador,
@@ -96,7 +96,7 @@ from core.premium_memory import (
     obter_perfil as premium_obter_perfil,
     personalizar_resposta_por_contexto as premium_personalizar_resposta,
 )
-from core.rag_local import consultar_rag, reindexar_documentos
+from core.rag_local import consultar_rag, reindexar_documentos, registrar_feedback_rag, estatisticas_feedback_rag
 from core.automacoes_seguras import (
     adicionar_rotina,
     detectar_rotina_disparada,
@@ -107,6 +107,8 @@ from core.automacoes_seguras import (
 )
 from core.voz_neural_api import sintetizar_neural_base64
 from core.voz import falar
+from core.agent_observability import registrar_trace, listar_traces, resumo_traces
+from core.runtime_guard import checar_rate_limit, validar_token, token_api_configurado
 
 
 def _novo_contexto():
@@ -281,6 +283,18 @@ def processar_mensagem(user):
         duracao_ms = (time.perf_counter() - inicio) * 1000.0
         try:
             registrar_metrica(evento, duracao_ms, ok=ok)
+        except Exception:
+            pass
+        try:
+            registrar_trace(
+                route="/chat",
+                mensagem=user,
+                resposta=msg,
+                evento=evento,
+                duracao_ms=duracao_ms,
+                ok=ok,
+                contexto=CONTEXTO,
+            )
         except Exception:
             pass
         return msg
@@ -684,10 +698,53 @@ class NovaHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
+    def _rate_limit_ok(self, route: str) -> bool:
+        ip = self.client_address[0] if self.client_address else "unknown"
+        limite = 120
+        janela = 60
+        if route.startswith("/chat"):
+            limite = 90
+        if route.startswith("/admin") or route.startswith("/security"):
+            limite = 30
+        ok, retry = checar_rate_limit(chave=f"{ip}:{route}", limite=limite, janela_s=janela)
+        if ok:
+            return True
+        self._send_json(
+            {"ok": False, "error": "rate_limited", "retry_after_s": retry},
+            status=HTTPStatus.TOO_MANY_REQUESTS,
+        )
+        return False
+
+    def _token_required_for(self, path: str) -> bool:
+        if not token_api_configurado():
+            return False
+        protegidas = (
+            path.startswith("/admin")
+            or path.startswith("/security")
+            or path.startswith("/backup")
+            or path.startswith("/automation")
+            or path.startswith("/rag/index")
+            or path.startswith("/rag/feedback")
+            or path.startswith("/agent/")
+        )
+        return protegidas
+
+    def _auth_ok(self, path: str) -> bool:
+        if not self._token_required_for(path):
+            return True
+        if validar_token(self.headers):
+            return True
+        self._send_json({"ok": False, "error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+        return False
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         query = parse_qs(parsed.query or "")
+        if not self._rate_limit_ok(path):
+            return
+        if not self._auth_ok(path):
+            return
 
         if path == "/":
             self._send_json(
@@ -741,6 +798,20 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/insights/alerts":
             self._send_json({"ok": True, "alerts": gerar_alertas_recomendacoes()})
             return
+        if path == "/observability/traces":
+            try:
+                limit = int((query.get("limit", ["120"])[0] or "120").strip())
+            except Exception:
+                limit = 120
+            self._send_json({"ok": True, "items": listar_traces(limit=limit)})
+            return
+        if path == "/observability/summary":
+            try:
+                janela = int((query.get("window", ["200"])[0] or "200").strip())
+            except Exception:
+                janela = 200
+            self._send_json({"ok": True, "summary": resumo_traces(janela=janela)})
+            return
         if path == "/premium/profile":
             user_id = (query.get("user_id", ["default"])[0] or "default").strip()
             self._send_json({"ok": True, "profile": premium_obter_perfil(user_id)})
@@ -775,12 +846,19 @@ class NovaHandler(BaseHTTPRequestHandler):
             rules = listar_rotinas()
             self._send_json({"ok": True, "rules": rules, "total": len(rules)})
             return
+        if path == "/rag/feedback/stats":
+            self._send_json(estatisticas_feedback_rag())
+            return
 
         self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        if not self._rate_limit_ok(path):
+            return
+        if not self._auth_ok(path):
+            return
         body = _json_body(self)
         if body is None:
             self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
@@ -837,6 +915,76 @@ class NovaHandler(BaseHTTPRequestHandler):
             out = consultar_rag(pergunta)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json({"ok": out.get("ok") is True, "result": out}, status=status)
+            return
+
+        if path == "/rag/feedback":
+            pergunta = str(body.get("query", "")).strip()
+            chunk_id = str(body.get("chunk_id", "")).strip()
+            try:
+                score = int(body.get("score", 1))
+            except Exception:
+                score = 1
+            out = registrar_feedback_rag(pergunta, chunk_id, score=score)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
+            return
+
+        if path == "/agent/plan":
+            objetivo = str(body.get("objective", "")).strip()
+            if not objetivo:
+                self._send_json({"ok": False, "error": "objective_required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            plano = planejar_objetivo(objetivo, contexto=CONTEXTO)
+            steps = []
+            needs_confirmation = False
+            for p in plano:
+                item = {
+                    "action": getattr(p, "acao", ""),
+                    "description": getattr(p, "descricao", ""),
+                    "parameters": getattr(p, "parametros", {}),
+                    "sensitive": bool(getattr(p, "sensivel", False)),
+                }
+                if item["sensitive"]:
+                    needs_confirmation = True
+                steps.append(item)
+            self._send_json(
+                {
+                    "ok": True,
+                    "objective": objetivo,
+                    "plan": steps,
+                    "needs_confirmation": needs_confirmation,
+                }
+            )
+            return
+
+        if path == "/agent/execute":
+            objetivo = str(body.get("objective", "")).strip()
+            if not objetivo:
+                self._send_json({"ok": False, "error": "objective_required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            resultado = executar_agente(objetivo, contexto=CONTEXTO)
+            CONTEXTO["confirmacao_pendente"] = resultado.get("confirmacao_pendente")
+            steps = []
+            for p in (resultado.get("plano", []) or []):
+                steps.append(
+                    {
+                        "action": getattr(p, "acao", ""),
+                        "description": getattr(p, "descricao", ""),
+                        "parameters": getattr(p, "parametros", {}),
+                        "status": getattr(p, "status", ""),
+                        "output": getattr(p, "saida", ""),
+                        "error": getattr(p, "erro", ""),
+                        "sensitive": bool(getattr(p, "sensivel", False)),
+                    }
+                )
+            self._send_json(
+                {
+                    "ok": True,
+                    "message": resultado.get("mensagem", ""),
+                    "confirmation_pending": resultado.get("confirmacao_pendente"),
+                    "plan": steps,
+                }
+            )
             return
 
         if path == "/automation/rules":
@@ -973,6 +1121,10 @@ class NovaHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        if not self._rate_limit_ok(path):
+            return
+        if not self._auth_ok(path):
+            return
         body = _json_body(self)
         if body is None:
             self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
@@ -1012,6 +1164,10 @@ class NovaHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
+        if not self._rate_limit_ok(path):
+            return
+        if not self._auth_ok(path):
+            return
 
         if path.startswith("/knowledge/"):
             item_id = path.split("/")[-1]

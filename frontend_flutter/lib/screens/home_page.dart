@@ -276,10 +276,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _loadReminders() async {
     try {
       final items = await _api.getReminders();
+      await _localDb.saveReminders(items);
       if (!mounted) return;
       setState(() => _reminders = items);
     } catch (_) {
-      // mantém vazio offline
+      try {
+        final localItems = await _localDb.getReminders();
+        if (!mounted) return;
+        setState(() => _reminders = localItems);
+      } catch (_) {
+        // mantém último estado em memória
+      }
     }
   }
 
@@ -817,6 +824,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (t == 'abrir lembretes' || t == 'mostrar lembretes') {
       _openRemindersDialog();
       return 'Abrindo lembretes.';
+    }
+    if (t == 'abrir observabilidade' ||
+        t == 'mostrar observabilidade' ||
+        t == '/observabilidade') {
+      _openObservabilityDialog();
+      return 'Abrindo observabilidade.';
+    }
+    if (t == 'abrir rag feedback' ||
+        t == 'mostrar rag feedback' ||
+        t == '/rag-feedback') {
+      _openRagFeedbackDialog();
+      return 'Abrindo painel de feedback RAG.';
+    }
+    if (t == 'abrir agente ia' || t == 'abrir agente' || t == '/agente-ia') {
+      _openAgentControlDialog();
+      return 'Abrindo painel do agente IA.';
     }
     if (t == 'abrir compatibilidade' ||
         t == 'mostrar compatibilidade' ||
@@ -1403,12 +1426,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               if (text.isEmpty) return;
               final whenIso = selectedDateTime?.toIso8601String() ?? '';
               try {
-                final created =
-                    await _api.addReminder(text: text, when: whenIso);
-                if (created['ok'] != true) {
-                  _showSnack('Não foi possível salvar o lembrete.');
-                  return;
+                Map<String, dynamic>? createdItem;
+                bool synced = false;
+                try {
+                  final created = await _api.addReminder(text: text, when: whenIso);
+                  if (created['ok'] == true && created['item'] is Map) {
+                    createdItem = Map<String, dynamic>.from(created['item'] as Map);
+                    synced = true;
+                  }
+                } catch (_) {
+                  // fallback local logo abaixo
                 }
+
+                createdItem ??= {
+                  'id': 'local_${DateTime.now().millisecondsSinceEpoch}',
+                  'texto': text,
+                  'quando': whenIso,
+                  'criado_em': DateTime.now().toIso8601String(),
+                  'feito': false,
+                };
+
+                await _localDb.upsertReminder(createdItem);
                 if (selectedDateTime != null) {
                   final id = DateTime.now().millisecondsSinceEpoch % 2147483647;
                   await _notifications.scheduleReminder(
@@ -1422,7 +1460,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 selectedDateTime = null;
                 await _loadReminders();
                 setLocalState(() {});
-                _showSnack('Lembrete salvo.');
+                _showSnack(
+                  synced
+                      ? 'Lembrete salvo e sincronizado com backend.'
+                      : 'Lembrete salvo localmente (sem backend no momento).',
+                );
               } catch (_) {
                 _showSnack('Falha ao salvar lembrete.');
               }
@@ -1547,6 +1589,584 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
 
     textController.dispose();
+  }
+
+  Future<void> _openObservabilityDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+
+    Map<String, dynamic> summary = {};
+    List<Map<String, dynamic>> traces = [];
+    String error = '';
+    bool loading = false;
+
+    Future<void> load() async {
+      try {
+        summary = await _api.getObservabilitySummary(window: 250);
+        traces = await _api.getObservabilityTraces(limit: 120);
+      } catch (_) {
+        error =
+            'Não foi possível carregar observabilidade no backend (verifique token/API).';
+      }
+    }
+
+    await load();
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Future<void> refresh() async {
+              setLocalState(() {
+                loading = true;
+                error = '';
+              });
+              await load();
+              if (!context.mounted) return;
+              setLocalState(() => loading = false);
+            }
+
+            final total = summary['total']?.toString() ?? '0';
+            final erroPct = summary['taxa_erro_pct']?.toString() ?? '0';
+            final lat = summary['latencia_media_ms']?.toString() ?? '0';
+            final alertsRaw = summary['alertas'];
+            final alerts = (alertsRaw is List)
+                ? alertsRaw.map((e) => e.toString()).toList()
+                : <String>[];
+
+            return _PanelDialog(
+              title: 'OBSERVABILIDADE',
+              child: SizedBox(
+                width: 760,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (error.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A)),
+                        ),
+                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: _boxDeco,
+                            child: Text(
+                              'Traces: $total',
+                              style: const TextStyle(color: Color(0xFFD7F5FF)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: _boxDeco,
+                            child: Text(
+                              'Erro: $erroPct%',
+                              style: const TextStyle(color: Color(0xFFD7F5FF)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: _boxDeco,
+                            child: Text(
+                              'Latência: ${lat}ms',
+                              style: const TextStyle(color: Color(0xFFD7F5FF)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: _boxDeco,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Alertas',
+                            style: TextStyle(
+                                color: Color(0xFFBDE8FF),
+                                fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 6),
+                          if (alerts.isEmpty)
+                            const Text('Sem alertas no momento.',
+                                style: TextStyle(color: Color(0xFF6DA7C8)))
+                          else
+                            ...alerts.map(
+                              (a) => Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Text(
+                                  '- $a',
+                                  style: const TextStyle(
+                                      color: Color(0xFFD5F5FF), fontSize: 12),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: _boxDeco,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Últimos traces',
+                            style: TextStyle(
+                                color: Color(0xFFBDE8FF),
+                                fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 260),
+                            child: traces.isEmpty
+                                ? const Text(
+                                    'Sem traces ainda.',
+                                    style: TextStyle(color: Color(0xFF6DA7C8)),
+                                  )
+                                : ListView.separated(
+                                    shrinkWrap: true,
+                                    itemCount: traces.length,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(height: 8),
+                                    itemBuilder: (context, index) {
+                                      final t = traces[traces.length - 1 - index];
+                                      final ok = t['ok'] == true;
+                                      final ev = t['evento']?.toString() ?? 'chat';
+                                      final msg = t['mensagem_preview']?.toString() ?? '';
+                                      final dur = t['duracao_ms']?.toString() ?? '-';
+                                      return Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0x4403182A),
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(
+                                            color: ok
+                                                ? const Color(0xFF0A4D74)
+                                                : const Color(0xFF7B3030),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '[${ok ? "ok" : "erro"}] $ev · ${dur}ms\n$msg',
+                                          style: const TextStyle(
+                                            color: Color(0xFFD4F4FF),
+                                            fontSize: 12,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: loading ? null : refresh,
+                        icon: loading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh),
+                        label: Text(loading ? 'Atualizando...' : 'Atualizar'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openRagFeedbackDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+    final queryController = TextEditingController();
+    List<Map<String, dynamic>> items = [];
+    String answer = '';
+    String error = '';
+    bool loading = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Future<void> pesquisar() async {
+              final q = queryController.text.trim();
+              if (q.isEmpty) return;
+              setLocalState(() {
+                loading = true;
+                error = '';
+              });
+              try {
+                final out = await _api.ragQuery(q);
+                final result = out['result'];
+                if (result is! Map || result['ok'] != true) {
+                  setLocalState(() {
+                    error = 'RAG sem resultado para essa consulta.';
+                    items = [];
+                    answer = '';
+                  });
+                  return;
+                }
+                final arr = result['snippet_items'];
+                final parsed = (arr is List)
+                    ? arr
+                        .whereType<Map>()
+                        .map((e) => Map<String, dynamic>.from(e))
+                        .toList()
+                    : <Map<String, dynamic>>[];
+                setLocalState(() {
+                  items = parsed;
+                  answer = result['answer']?.toString() ?? '';
+                });
+              } catch (_) {
+                setLocalState(() {
+                  error = 'Falha ao consultar RAG.';
+                });
+              } finally {
+                if (context.mounted) {
+                  setLocalState(() => loading = false);
+                }
+              }
+            }
+
+            Future<void> avaliar(String chunkId, int score) async {
+              final q = queryController.text.trim();
+              if (q.isEmpty || chunkId.isEmpty) return;
+              try {
+                await _api.ragFeedback(
+                  query: q,
+                  chunkId: chunkId,
+                  score: score,
+                );
+                _showSnack(score > 0
+                    ? 'Feedback positivo registrado.'
+                    : 'Feedback negativo registrado.');
+              } catch (_) {
+                _showSnack('Falha ao registrar feedback RAG.');
+              }
+            }
+
+            return _PanelDialog(
+              title: 'RAG FEEDBACK',
+              child: SizedBox(
+                width: 760,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _NovaInput(
+                      controller: queryController,
+                      hintText: 'Pergunta para testar o RAG...',
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: loading ? null : pesquisar,
+                        icon: loading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.search),
+                        label: Text(loading ? 'Pesquisando...' : 'Consultar RAG'),
+                      ),
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A))),
+                    ],
+                    if (answer.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: _boxDeco,
+                        child: Text(
+                          answer,
+                          style: const TextStyle(
+                              color: Color(0xFFD4F4FF), height: 1.35),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 300),
+                      child: items.isEmpty
+                          ? const Text(
+                              'Sem trechos ainda. Faça uma consulta.',
+                              style: TextStyle(color: Color(0xFF6DA7C8)),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: items.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final item = items[index];
+                                final id = item['id']?.toString() ?? '';
+                                final source = item['source']?.toString() ?? '-';
+                                final text = item['text']?.toString() ?? '';
+                                return Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: _boxDeco,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '$source • ${id.isEmpty ? "-" : id}',
+                                        style: const TextStyle(
+                                          color: Color(0xFF79B1CE),
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        text,
+                                        style: const TextStyle(
+                                          color: Color(0xFFD4F4FF),
+                                          fontSize: 12,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        children: [
+                                          OutlinedButton.icon(
+                                            onPressed: id.isEmpty
+                                                ? null
+                                                : () => avaliar(id, 1),
+                                            icon: const Icon(Icons.thumb_up_alt_outlined, size: 16),
+                                            label: const Text('Relevante'),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          OutlinedButton.icon(
+                                            onPressed: id.isEmpty
+                                                ? null
+                                                : () => avaliar(id, -1),
+                                            icon: const Icon(Icons.thumb_down_alt_outlined, size: 16),
+                                            label: const Text('Irrelevante'),
+                                          ),
+                                        ],
+                                      )
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    queryController.dispose();
+  }
+
+  Future<void> _openAgentControlDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+    final objectiveController = TextEditingController();
+    List<Map<String, dynamic>> plan = [];
+    String agentMessage = '';
+    bool loading = false;
+    String error = '';
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Future<void> doPlan() async {
+              final objective = objectiveController.text.trim();
+              if (objective.isEmpty) return;
+              setLocalState(() {
+                loading = true;
+                error = '';
+              });
+              try {
+                final out = await _api.agentPlan(objective);
+                final arr = out['plan'];
+                final parsed = (arr is List)
+                    ? arr
+                        .whereType<Map>()
+                        .map((e) => Map<String, dynamic>.from(e))
+                        .toList()
+                    : <Map<String, dynamic>>[];
+                setLocalState(() => plan = parsed);
+              } catch (_) {
+                setLocalState(() => error = 'Falha ao planejar.');
+              } finally {
+                if (context.mounted) setLocalState(() => loading = false);
+              }
+            }
+
+            Future<void> doExecute() async {
+              final objective = objectiveController.text.trim();
+              if (objective.isEmpty) return;
+              setLocalState(() {
+                loading = true;
+                error = '';
+              });
+              try {
+                final out = await _api.agentExecute(objective);
+                agentMessage = out['message']?.toString() ?? '';
+                final arr = out['plan'];
+                final parsed = (arr is List)
+                    ? arr
+                        .whereType<Map>()
+                        .map((e) => Map<String, dynamic>.from(e))
+                        .toList()
+                    : <Map<String, dynamic>>[];
+                setLocalState(() => plan = parsed);
+              } catch (_) {
+                setLocalState(() => error = 'Falha ao executar agente.');
+              } finally {
+                if (context.mounted) setLocalState(() => loading = false);
+              }
+            }
+
+            return _PanelDialog(
+              title: 'AGENTE IA',
+              child: SizedBox(
+                width: 760,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _NovaInput(
+                      controller: objectiveController,
+                      hintText: 'Objetivo do agente...',
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: loading ? null : doPlan,
+                            icon: const Icon(Icons.auto_graph),
+                            label: const Text('Planejar'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: loading ? null : doExecute,
+                            icon: loading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.play_arrow),
+                            label: Text(loading ? 'Executando...' : 'Executar'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A))),
+                    ],
+                    if (agentMessage.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: _boxDeco,
+                        child: Text(
+                          agentMessage,
+                          style: const TextStyle(color: Color(0xFFD5F5FF)),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 260),
+                      child: plan.isEmpty
+                          ? const Text(
+                              'Sem plano ainda.',
+                              style: TextStyle(color: Color(0xFF6DA7C8)),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: plan.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final p = plan[index];
+                                final act = p['action']?.toString() ?? '-';
+                                final desc = p['description']?.toString() ?? '-';
+                                final status = p['status']?.toString() ?? '';
+                                return Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: _boxDeco,
+                                  child: Text(
+                                    '${index + 1}. $desc\nAção: $act${status.isEmpty ? '' : '\nStatus: $status'}',
+                                    style: const TextStyle(
+                                      color: Color(0xFFD4F4FF),
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    objectiveController.dispose();
   }
 
   Future<void> _openCompatibilityDialog() async {
@@ -2167,24 +2787,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final telegramChatController = TextEditingController(
       text: _config['telegram_chat_id']?.toString() ?? '',
     );
+    bool vozAtiva = _config['voz_ativa'] == true;
+    bool vozNeuralHybrid = _config['voice_neural_hybrid'] != false;
+    String voiceProfile =
+        _config['voice_profile']?.toString().trim().toLowerCase() ??
+            'feminina';
+    bool escutaAtiva = _config['escuta_ativa'] != false;
+    bool telegramAtivo = _config['telegram_ativo'] == true;
+    bool wakeContinuo = _config['continuous_wake'] != false;
+    bool pushToTalkOnly = _config['push_to_talk_only'] != false;
+    bool adminGuard = _config['admin_guard'] != false;
+    bool allowVoiceOnLock = _config['allow_voice_on_lock'] != false;
 
     await showDialog<void>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
-            bool vozAtiva = _config['voz_ativa'] == true;
-            bool vozNeuralHybrid = _config['voice_neural_hybrid'] != false;
-            String voiceProfile =
-                _config['voice_profile']?.toString().trim().toLowerCase() ??
-                    'feminina';
-            bool escutaAtiva = _config['escuta_ativa'] != false;
-            bool telegramAtivo = _config['telegram_ativo'] == true;
-            bool wakeContinuo = _config['continuous_wake'] != false;
-            bool pushToTalkOnly = _config['push_to_talk_only'] != false;
-            bool adminGuard = _config['admin_guard'] != false;
-            bool allowVoiceOnLock = _config['allow_voice_on_lock'] != false;
-
             Future<void> salvarConfig() async {
               final wakeContinuoEfetivo = pushToTalkOnly ? false : wakeContinuo;
               final novo = {
@@ -2234,7 +2853,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 Navigator.of(context).pop();
                 _showSnack('Configurações salvas com sucesso.');
               } catch (_) {
-                _showSnack('Falha ao salvar configurações.');
+                if (!mounted) return;
+                setState(() {
+                  _config = {..._config, ...novo};
+                  _continuousWakeMode = _config['continuous_wake'] != false;
+                  if (_pushToTalkOnly) {
+                    _continuousWakeMode = false;
+                  }
+                });
+                await _saveLocalState();
+                if (!context.mounted) return;
+                Navigator.of(context).pop();
+                _showSnack(
+                  'Configurações salvas localmente (sem backend no momento).',
+                );
               }
             }
 
@@ -2688,6 +3320,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               tile('Ensinar', Icons.school_outlined, _openTeachDialog),
               tile('Editar Base', Icons.edit_note, _openKnowledgeDialog),
               tile('Lembretes', Icons.alarm, _openRemindersDialog),
+              tile('Agente IA', Icons.smart_toy_outlined, _openAgentControlDialog),
+              tile('Observabilidade', Icons.monitor_heart_outlined,
+                  _openObservabilityDialog),
+              tile('RAG Feedback', Icons.thumb_up_alt_outlined,
+                  _openRagFeedbackDialog),
               tile('Auditoria', Icons.security, _openSecurityAuditDialog),
               tile('Compatibilidade', Icons.devices, _openCompatibilityDialog),
               tile('Configurações', Icons.settings_outlined, _openConfigDialog),
@@ -2872,55 +3509,63 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xCC02111D),
-        border: Border(
-          bottom: BorderSide(
-            color: const Color(0xFF0B3D5F).withValues(alpha: 0.6),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 560;
+        final logoSize = compact ? 26.0 : 30.0;
+        final titleSize = compact ? 24.0 : 32.0;
+        final barHeight = compact ? 54.0 : 60.0;
+        return Container(
+          height: barHeight,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12),
+          decoration: BoxDecoration(
+            color: const Color(0xCC02111D),
+            border: Border(
+              bottom: BorderSide(
+                color: const Color(0xFF0B3D5F).withValues(alpha: 0.6),
+              ),
+            ),
           ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF0FA8DA)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x5510CEFF),
-                  blurRadius: 8,
-                  spreadRadius: 0.5,
+          child: Row(
+            children: [
+              Container(
+                width: logoSize,
+                height: logoSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF0FA8DA)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x5510CEFF),
+                      blurRadius: 8,
+                      spreadRadius: 0.5,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: ClipOval(
-              child: Image.asset('assets/giphy3.gif', fit: BoxFit.cover),
-            ),
+                child: ClipOval(
+                  child: Image.asset('assets/giphy3.gif', fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'NOVA',
+                style: TextStyle(
+                  color: const Color(0xFF21CCFF),
+                  fontSize: titleSize,
+                  letterSpacing: compact ? 1.2 : 1.8,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              _TopAction(
+                label: compact ? 'Menu' : 'Menu',
+                icon: Icons.menu_rounded,
+                onTap: onMenu,
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          const Text(
-            'NOVA',
-            style: TextStyle(
-              color: Color(0xFF21CCFF),
-              fontSize: 32,
-              letterSpacing: 1.8,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const Spacer(),
-          _TopAction(
-            label: 'Menu',
-            icon: Icons.menu_rounded,
-            onTap: onMenu,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -2969,33 +3614,66 @@ class _MobileStatsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0x8F02111D),
-        border: Border.all(color: const Color(0xFF083D5E)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _StatTile(label: 'Msgs', value: '$messagesCount'),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+        return Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0x8F02111D),
+            border: Border.all(color: const Color(0xFF083D5E)),
+            borderRadius: BorderRadius.circular(12),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _StatTile(label: 'Ensino', value: '$learnedCount'),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _StatTile(label: 'Users', value: '$usersCount'),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed: onTeach,
-            child: const Text('Ensinar'),
-          ),
-        ],
-      ),
+          child: compact
+              ? Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatTile(label: 'Msgs', value: '$messagesCount'),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: _StatTile(label: 'Ensino', value: '$learnedCount'),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: _StatTile(label: 'Users', value: '$usersCount'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: onTeach,
+                        child: const Text('Ensinar'),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: _StatTile(label: 'Msgs', value: '$messagesCount'),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _StatTile(label: 'Ensino', value: '$learnedCount'),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _StatTile(label: 'Users', value: '$usersCount'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: onTeach,
+                      child: const Text('Ensinar'),
+                    ),
+                  ],
+                ),
+        );
+      },
     );
   }
 }
@@ -3327,53 +4005,66 @@ class _PanelDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final maxWidth = size.width < 420 ? size.width * 0.97 : size.width * 0.94;
+    final targetWidth = maxWidth > 920 ? 920.0 : maxWidth;
+    final targetHeight = size.height * 0.9;
     return Dialog(
       backgroundColor: Colors.transparent,
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xE6031626),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF0A4D74)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x77000F1E),
-              blurRadius: 28,
-              spreadRadius: 1,
-            ),
-          ],
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: targetWidth,
+          maxHeight: targetHeight,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 10),
-              child: Row(
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Color(0xFF00CEFF),
-                      fontSize: 24,
-                      letterSpacing: 1.1,
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xE6031626),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF0A4D74)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x77000F1E),
+                blurRadius: 28,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: const Color(0xFF00CEFF),
+                          fontSize: size.width < 460 ? 18 : 24,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
                     ),
-                  ),
-                  const Spacer(),
-                  ...actions,
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, color: Color(0xFF5DA3C6)),
-                  ),
-                ],
+                    ...actions,
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, color: Color(0xFF5DA3C6)),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const Divider(height: 1, color: Color(0xFF0A3F60)),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: child,
+              const Divider(height: 1, color: Color(0xFF0A3F60)),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: child,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
