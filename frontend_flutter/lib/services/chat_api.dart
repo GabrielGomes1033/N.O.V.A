@@ -272,6 +272,44 @@ class ChatApiService {
     return payload['summary']?.toString() ?? 'Sem clima no momento.';
   }
 
+  Future<String> getWeatherByCoords({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final suffix =
+        '/weather/by-coords?lat=${Uri.encodeComponent(latitude.toString())}&lon=${Uri.encodeComponent(longitude.toString())}';
+    final payload = await _requestJson('GET', suffix);
+    return payload['summary']?.toString() ?? 'Sem clima por coordenadas.';
+  }
+
+  Future<Map<String, dynamic>> getCurrentLocation() async {
+    final payload = await _requestJson('GET', '/location/current');
+    final loc = payload['location'];
+    if (loc is Map<String, dynamic>) return loc;
+    if (loc is Map) return Map<String, dynamic>.from(loc);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> updateLocation({
+    required String label,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final payload = await _requestJson(
+      'POST',
+      '/location/update',
+      body: {
+        'label': label,
+        'latitude': latitude.toStringAsFixed(6),
+        'longitude': longitude.toStringAsFixed(6),
+      },
+    );
+    final loc = payload['location'];
+    if (loc is Map<String, dynamic>) return loc;
+    if (loc is Map) return Map<String, dynamic>.from(loc);
+    return {};
+  }
+
   Future<List<Map<String, dynamic>>> getReminders() async {
     final payload = await _requestJson('GET', '/reminders');
     final items = payload['items'];

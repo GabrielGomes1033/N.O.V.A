@@ -258,6 +258,63 @@ def consultar_clima(cidade: str | None = None) -> str:
         return "Não consegui consultar o clima agora."
 
 
+def _descricao_weathercode(code: int) -> str:
+    mapa = {
+        0: "céu limpo",
+        1: "predominantemente limpo",
+        2: "parcialmente nublado",
+        3: "nublado",
+        45: "névoa",
+        48: "névoa com geada",
+        51: "garoa fraca",
+        53: "garoa moderada",
+        55: "garoa intensa",
+        61: "chuva fraca",
+        63: "chuva moderada",
+        65: "chuva forte",
+        71: "neve fraca",
+        73: "neve moderada",
+        75: "neve forte",
+        80: "pancadas de chuva fracas",
+        81: "pancadas de chuva moderadas",
+        82: "pancadas de chuva fortes",
+        95: "trovoadas",
+        96: "trovoadas com granizo fraco",
+        99: "trovoadas com granizo forte",
+    }
+    return mapa.get(int(code), "condição variável")
+
+
+def consultar_clima_por_coordenadas(latitude: float, longitude: float) -> str:
+    try:
+        lat = float(latitude)
+        lon = float(longitude)
+    except Exception:
+        return "Coordenadas inválidas para clima."
+
+    try:
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}&current=temperature_2m,apparent_temperature,weathercode"
+        )
+        r = requests.get(url, timeout=TIMEOUT_PADRAO)
+        r.raise_for_status()
+        data = r.json()
+        current = data.get("current", {}) if isinstance(data, dict) else {}
+        temp = current.get("temperature_2m")
+        sens = current.get("apparent_temperature")
+        code = int(current.get("weathercode", -1))
+        if temp is None:
+            return "Não consegui ler o clima por coordenadas agora."
+        desc = _descricao_weathercode(code)
+        return (
+            f"Agora na sua localização ({lat:.4f}, {lon:.4f}): {desc}, "
+            f"temperatura de {temp}°C e sensação de {sens}°C."
+        )
+    except Exception:
+        return "Não consegui consultar o clima da sua localização agora."
+
+
 def _carregar_lembretes() -> list[dict]:
     dados = carregar_json_seguro(ARQUIVO_LEMBRETES, [])
     if not isinstance(dados, list):

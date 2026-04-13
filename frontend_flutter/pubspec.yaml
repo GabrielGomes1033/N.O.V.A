@@ -15,7 +15,21 @@ dependencies:
     sdk: flutter
   http: ^1.2.2
   flutter_tts: ^4.2.2
-  shared_preferences: ^2.5.3
+  sqflite: ^2.4.1
+  path: ^1.9.1
+  audioplayers: ^6.1.0
+  file_picker: ^8.1.2
+  flutter_local_notifications: ^17.2.2
+  timezone: ^0.9.4
+  url_launcher: ^6.3.1
+  android_intent_plus: ^5.3.0
+  flutter_secure_storage: ^9.2.2
+  local_auth: ^2.3.0
+  crypto: ^3.0.6
+  device_info_plus: ^10.1.2
+  package_info_plus: ^8.0.2
+  battery_plus: ^6.0.2
+  geolocator: ^13.0.1
   # Reconhecimento de fala (microfone -> texto).
   speech_to_text: ^7.0.0
   # Tipografia mais profissional para o painel.

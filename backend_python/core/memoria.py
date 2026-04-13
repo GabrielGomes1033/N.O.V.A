@@ -18,6 +18,10 @@ MEMORIA_PADRAO = {
     "objetivos_recentes": [],
     "ultima_interacao": "",
     "interacoes_recentes": [],
+    "ultima_localizacao": "",
+    "ultima_latitude": "",
+    "ultima_longitude": "",
+    "ultima_localizacao_em": "",
 }
 IDIOMAS_SUPORTADOS = {"pt", "en", "es"}
 
@@ -121,11 +125,13 @@ def formatar_memoria_usuario(memoria):
     objetivos = memoria.get("objetivos_recentes", [])
     ultimo_objetivo = objetivos[-1] if objetivos else "nenhum"
     ultima_interacao = memoria.get("ultima_interacao") or "não registrada"
+    localizacao = memoria.get("ultima_localizacao") or "não definida"
     return (
         f"Nome: {nome}\n"
         f"Idioma preferido: {idioma}\n"
         f"Tratamento: {tratamento}\n"
         f"Tópicos favoritos: {topicos}\n"
         f"Último objetivo: {ultimo_objetivo}\n"
-        f"Última interação: {ultima_interacao}"
+        f"Última interação: {ultima_interacao}\n"
+        f"Localização: {localizacao}"
     )

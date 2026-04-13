@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,6 +49,7 @@ from core.assistente_plus import (
     aprender_gostos_por_mensagem,
     calcular_expressao,
     consultar_clima,
+    consultar_clima_por_coordenadas,
     cotacoes_financeiras,
     formatar_cotacoes_humanas,
     listar_lembretes,
@@ -590,9 +592,24 @@ def processar_mensagem(user):
     CONTEXTO["ultima_intencao"] = intencao
     resposta = responder(user, contexto=CONTEXTO)
     if intencao == "saudacao":
-        partes = re.split(r"(?<=[.!?])\s+", resposta.strip())
-        if partes:
-            resposta = partes[0].strip()
+        memoria = carregar_memoria_usuario()
+        hora = datetime.now().hour
+        if 5 <= hora < 12:
+            saud = "Bom dia"
+        elif 12 <= hora < 18:
+            saud = "Boa tarde"
+        else:
+            saud = "Boa noite"
+        nome = (CONTEXTO.get("nome_usuario") or memoria.get("nome_usuario") or "").strip()
+        local = (memoria.get("ultima_localizacao") or "").strip()
+        if nome and local:
+            resposta = f"{saud}, {nome}. Como posso ajudar você aí em {local}?"
+        elif nome:
+            resposta = f"{saud}, {nome}. Como posso ajudar você agora?"
+        elif local:
+            resposta = f"{saud}. Como posso ajudar você aí em {local}?"
+        else:
+            resposta = f"{saud}. Como posso ajudar você agora?"
     if "não entendi" in resposta.lower() or "não consegui entender" in resposta.lower():
         resposta += " Se quiser, me ensine essa resposta com /ensinar pergunta = resposta."
     if any(k in user_l for k in ["programação", "programacao", "api", "agente de ia", "agentes de ia"]):
@@ -837,6 +854,31 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/weather/now":
             cidade = (query.get("city", [""])[0] or "").strip()
             self._send_json({"ok": True, "summary": consultar_clima(cidade)})
+            return
+        if path == "/weather/by-coords":
+            lat_raw = (query.get("lat", [""])[0] or "").strip()
+            lon_raw = (query.get("lon", [""])[0] or "").strip()
+            try:
+                lat = float(lat_raw)
+                lon = float(lon_raw)
+            except Exception:
+                self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"ok": True, "summary": consultar_clima_por_coordenadas(lat, lon)})
+            return
+        if path == "/location/current":
+            memoria = carregar_memoria_usuario()
+            self._send_json(
+                {
+                    "ok": True,
+                    "location": {
+                        "label": str(memoria.get("ultima_localizacao", "") or ""),
+                        "latitude": str(memoria.get("ultima_latitude", "") or ""),
+                        "longitude": str(memoria.get("ultima_longitude", "") or ""),
+                        "updated_at": str(memoria.get("ultima_localizacao_em", "") or ""),
+                    },
+                }
+            )
             return
         if path == "/reminders":
             lembretes = listar_lembretes()
@@ -1098,6 +1140,29 @@ class NovaHandler(BaseHTTPRequestHandler):
             item = adicionar_lembrete(texto, quando=quando)
             status = HTTPStatus.OK if item.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json(item, status=status)
+            return
+
+        if path == "/location/update":
+            label = str(body.get("label", "")).strip()
+            lat = str(body.get("latitude", "")).strip()
+            lon = str(body.get("longitude", "")).strip()
+            memoria = carregar_memoria_usuario()
+            memoria["ultima_localizacao"] = label
+            memoria["ultima_latitude"] = lat
+            memoria["ultima_longitude"] = lon
+            memoria["ultima_localizacao_em"] = datetime.now().isoformat(timespec="seconds")
+            salvar_memoria_usuario(memoria)
+            self._send_json(
+                {
+                    "ok": True,
+                    "location": {
+                        "label": label,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "updated_at": memoria["ultima_localizacao_em"],
+                    },
+                }
+            )
             return
 
         if path == "/project/create":

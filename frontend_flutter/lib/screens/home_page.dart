@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -75,22 +76,45 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Map<String, dynamic> _marketQuotes = {};
   List<Map<String, String>> _musicLibrary = [];
   List<Map<String, dynamic>> _reminders = [];
+  String _locationLabel = 'Localização não definida';
+  String _locationWeather = '';
+  bool _loadingLocation = false;
 
   bool get _listenModeEnabled => _config['escuta_ativa'] != false;
   bool get _pushToTalkOnly => _config['push_to_talk_only'] != false;
   bool get _effectiveContinuousWake => !_pushToTalkOnly && _continuousWakeMode;
 
+  String _periodGreeting() {
+    final h = DateTime.now().hour;
+    if (h >= 5 && h < 12) return 'Bom dia';
+    if (h >= 12 && h < 18) return 'Boa tarde';
+    return 'Boa noite';
+  }
+
+  String _initialGreeting() {
+    final base = '${_periodGreeting()}! Eu sou a NOVA.';
+    if (_locationLabel != 'Localização não definida') {
+      return '$base Aqui em $_locationLabel, pronta para te ajudar.';
+    }
+    return '$base Estou aqui, pronta para aprender com você e te ajudar.';
+  }
+
+  void _refreshWelcomeChatLine() {
+    if (_chat.isEmpty) return;
+    final first = _chat.first;
+    if (first.fromUser) return;
+    final txt = first.text.toLowerCase();
+    if (!(txt.contains('eu sou a nova') || txt.contains('pronta para'))) return;
+    setState(() {
+      _chat[0] = _ChatLine(fromUser: false, text: _initialGreeting());
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _chat.add(
-      const _ChatLine(
-        fromUser: false,
-        text:
-            'Olá! Eu sou a NOVA. Estou aqui, pronta para aprender com você e te ajudar.',
-      ),
-    );
+    _chat.add(_ChatLine(fromUser: false, text: _initialGreeting()));
     _restoreLocalState();
     _initTts();
     _initSpeech();
@@ -99,6 +123,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _loadMusicLibrary();
     _loadReminders();
     _notifications.init();
+    _loadLocationFromBackend();
   }
 
   @override
@@ -139,6 +164,78 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           allowVoiceOnLock: allow,
         );
       }
+    }
+  }
+
+  Future<void> _loadLocationFromBackend() async {
+    try {
+      final loc = await _api.getCurrentLocation();
+      final label = (loc['label']?.toString() ?? '').trim();
+      if (!mounted) return;
+      if (label.isNotEmpty) {
+        setState(() => _locationLabel = label);
+        _refreshWelcomeChatLine();
+      }
+    } catch (_) {
+      // sem backend, mantém local.
+    }
+  }
+
+  Future<void> _updateLocation() async {
+    if (_loadingLocation) return;
+    setState(() => _loadingLocation = true);
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        _showSnack('Ative a localização do celular.');
+        return;
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _showSnack('Permissão de localização negada.');
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+        ),
+      );
+      final label =
+          'Lat ${pos.latitude.toStringAsFixed(4)}, Lon ${pos.longitude.toStringAsFixed(4)}';
+
+      String weather = '';
+      try {
+        weather = await _api.getWeatherByCoords(
+          latitude: pos.latitude,
+          longitude: pos.longitude,
+        );
+      } catch (_) {
+        weather = '';
+      }
+      try {
+        await _api.updateLocation(
+          label: label,
+          latitude: pos.latitude,
+          longitude: pos.longitude,
+        );
+      } catch (_) {
+        // backend offline
+      }
+      if (!mounted) return;
+      setState(() {
+        _locationLabel = label;
+        _locationWeather = weather;
+        _systemStatus = 'Localização atualizada.';
+      });
+      _refreshWelcomeChatLine();
+    } catch (_) {
+      _showSnack('Não consegui obter sua localização agora.');
+    } finally {
+      if (mounted) setState(() => _loadingLocation = false);
     }
   }
 
@@ -3295,42 +3392,87 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF021626),
       showDragHandle: true,
       builder: (context) {
-        Widget tile(String label, IconData icon, VoidCallback onTap) {
-          return ListTile(
-            leading: Icon(icon, color: const Color(0xFF6CD2FF)),
-            title: Text(
-              label,
-              style: const TextStyle(color: Color(0xFFD2F2FF)),
-            ),
-            onTap: () {
-              Navigator.of(context).pop();
-              onTap();
-            },
-          );
-        }
+        final actions = <({String label, IconData icon, VoidCallback onTap})>[
+          (label: 'Usuários', icon: Icons.people_outline, onTap: _openUsersDialog),
+          (label: 'Ensinar', icon: Icons.school_outlined, onTap: _openTeachDialog),
+          (label: 'Editar Base', icon: Icons.edit_note, onTap: _openKnowledgeDialog),
+          (label: 'Lembretes', icon: Icons.alarm, onTap: _openRemindersDialog),
+          (label: 'Agente IA', icon: Icons.smart_toy_outlined, onTap: _openAgentControlDialog),
+          (label: 'Observabilidade', icon: Icons.monitor_heart_outlined, onTap: _openObservabilityDialog),
+          (label: 'RAG Feedback', icon: Icons.thumb_up_alt_outlined, onTap: _openRagFeedbackDialog),
+          (label: 'Auditoria', icon: Icons.security, onTap: _openSecurityAuditDialog),
+          (label: 'Compatibilidade', icon: Icons.devices, onTap: _openCompatibilityDialog),
+          (label: 'Configurações', icon: Icons.settings_outlined, onTap: _openConfigDialog),
+        ];
 
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              tile('Usuários', Icons.people_outline, _openUsersDialog),
-              tile('Ensinar', Icons.school_outlined, _openTeachDialog),
-              tile('Editar Base', Icons.edit_note, _openKnowledgeDialog),
-              tile('Lembretes', Icons.alarm, _openRemindersDialog),
-              tile('Agente IA', Icons.smart_toy_outlined, _openAgentControlDialog),
-              tile('Observabilidade', Icons.monitor_heart_outlined,
-                  _openObservabilityDialog),
-              tile('RAG Feedback', Icons.thumb_up_alt_outlined,
-                  _openRagFeedbackDialog),
-              tile('Auditoria', Icons.security, _openSecurityAuditDialog),
-              tile('Compatibilidade', Icons.devices, _openCompatibilityDialog),
-              tile('Configurações', Icons.settings_outlined, _openConfigDialog),
-              const SizedBox(height: 6),
-            ],
-          ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 560;
+            final maxHeight = MediaQuery.sizeOf(context).height * 0.8;
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: compact
+                    ? ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: actions.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1, color: Color(0x220A446A)),
+                        itemBuilder: (context, index) {
+                          final item = actions[index];
+                          return ListTile(
+                            leading: Icon(item.icon, color: const Color(0xFF6CD2FF)),
+                            title: Text(
+                              item.label,
+                              style: const TextStyle(color: Color(0xFFD2F2FF)),
+                            ),
+                            onTap: () {
+                              Navigator.of(context).pop();
+                              item.onTap();
+                            },
+                          );
+                        },
+                      )
+                    : GridView.builder(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 2.8,
+                        ),
+                        itemCount: actions.length,
+                        itemBuilder: (context, index) {
+                          final item = actions[index];
+                          return OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              item.onTap();
+                            },
+                            icon: Icon(item.icon, size: 18),
+                            label: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFD2F2FF),
+                              side: const BorderSide(color: Color(0xFF0A446A)),
+                              backgroundColor: const Color(0x4403182A),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            );
+          },
         );
       },
     );
@@ -3351,6 +3493,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 Expanded(
                   child: Column(
                     children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                        child: _LocationPanel(
+                          label: _locationLabel,
+                          weather: _locationWeather,
+                          loading: _loadingLocation,
+                          onRefresh: _updateLocation,
+                        ),
+                      ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
                         child: _MarketPanel(quotes: _marketQuotes),
@@ -3512,8 +3663,9 @@ class _TopBar extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 560;
+        final tiny = constraints.maxWidth < 420;
         final logoSize = compact ? 26.0 : 30.0;
-        final titleSize = compact ? 24.0 : 32.0;
+        final titleSize = tiny ? 20.0 : (compact ? 24.0 : 32.0);
         final barHeight = compact ? 54.0 : 60.0;
         return Container(
           height: barHeight,
@@ -3547,18 +3699,24 @@ class _TopBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                'NOVA',
-                style: TextStyle(
-                  color: const Color(0xFF21CCFF),
-                  fontSize: titleSize,
-                  letterSpacing: compact ? 1.2 : 1.8,
-                  fontWeight: FontWeight.w600,
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'NOVA',
+                    style: TextStyle(
+                      color: const Color(0xFF21CCFF),
+                      fontSize: titleSize,
+                      letterSpacing: compact ? 1.0 : 1.8,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
-              const Spacer(),
               _TopAction(
-                label: compact ? 'Menu' : 'Menu',
+                compact: tiny,
+                label: 'Menu',
                 icon: Icons.menu_rounded,
                 onTap: onMenu,
               ),
@@ -3575,14 +3733,27 @@ class _TopAction extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onTap,
+    this.compact = false,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onTap;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return IconButton(
+        onPressed: onTap,
+        tooltip: label,
+        icon: const Icon(Icons.menu_rounded, color: Color(0xFF77D8FF)),
+        style: IconButton.styleFrom(
+          side: const BorderSide(color: Color(0xFF0A446A)),
+          backgroundColor: const Color(0x3303182A),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: OutlinedButton.icon(
@@ -3594,6 +3765,89 @@ class _TopAction extends StatelessWidget {
           side: const BorderSide(color: Color(0xFF0A446A)),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
+      ),
+    );
+  }
+}
+
+class _LocationPanel extends StatelessWidget {
+  const _LocationPanel({
+    required this.label,
+    required this.weather,
+    required this.loading,
+    required this.onRefresh,
+  });
+
+  final String label;
+  final String weather;
+  final bool loading;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x8F02111D),
+        border: Border.all(color: const Color(0xFF083D5E)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.location_on_outlined, color: Color(0xFF74D8FF)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFD2F3FF),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+                if (weather.trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    weather,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF79AFCB),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 34,
+            child: OutlinedButton.icon(
+              onPressed: loading ? null : onRefresh,
+              icon: loading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location, size: 16),
+              label: Text(loading ? 'Atualizando' : 'Localizar'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF8BE5FF),
+                side: const BorderSide(color: Color(0xFF0A446A)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
