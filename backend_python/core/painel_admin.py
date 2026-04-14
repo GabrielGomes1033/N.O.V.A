@@ -128,6 +128,12 @@ def _config_padrao() -> dict:
         "continuous_wake": False,
         "push_to_talk_only": True,
         "allow_voice_on_lock": True,
+        "autonomia_ativa": False,
+        "autonomia_nivel_risco": "moderado",
+        "autonomia_liberdade": "media",
+        "autonomia_requer_confirmacao_sensivel": True,
+        "auto_document_learning": True,
+        "rbac_ativo": False,
         "admin_guard": True,
         "telegram_ativo": False,
         "telegram_token": os.getenv("NOVA_TELEGRAM_TOKEN", ""),
@@ -176,6 +182,29 @@ def atualizar_config_painel(**campos) -> dict:
         config["push_to_talk_only"] = bool(campos.get("push_to_talk_only"))
     if "allow_voice_on_lock" in campos and campos.get("allow_voice_on_lock") is not None:
         config["allow_voice_on_lock"] = bool(campos.get("allow_voice_on_lock"))
+    if "autonomia_ativa" in campos and campos.get("autonomia_ativa") is not None:
+        config["autonomia_ativa"] = bool(campos.get("autonomia_ativa"))
+    if "autonomia_nivel_risco" in campos and campos.get("autonomia_nivel_risco") is not None:
+        nivel = str(campos.get("autonomia_nivel_risco", "moderado")).strip().lower()
+        if nivel not in {"baixo", "moderado", "alto"}:
+            nivel = "moderado"
+        config["autonomia_nivel_risco"] = nivel
+    if "autonomia_liberdade" in campos and campos.get("autonomia_liberdade") is not None:
+        liberdade = str(campos.get("autonomia_liberdade", "media")).strip().lower()
+        if liberdade not in {"baixa", "media", "alta"}:
+            liberdade = "media"
+        config["autonomia_liberdade"] = liberdade
+    if (
+        "autonomia_requer_confirmacao_sensivel" in campos
+        and campos.get("autonomia_requer_confirmacao_sensivel") is not None
+    ):
+        config["autonomia_requer_confirmacao_sensivel"] = bool(
+            campos.get("autonomia_requer_confirmacao_sensivel")
+        )
+    if "auto_document_learning" in campos and campos.get("auto_document_learning") is not None:
+        config["auto_document_learning"] = bool(campos.get("auto_document_learning"))
+    if "rbac_ativo" in campos and campos.get("rbac_ativo") is not None:
+        config["rbac_ativo"] = bool(campos.get("rbac_ativo"))
     if "admin_guard" in campos and campos.get("admin_guard") is not None:
         config["admin_guard"] = bool(campos.get("admin_guard"))
     if "telegram_ativo" in campos and campos.get("telegram_ativo") is not None:

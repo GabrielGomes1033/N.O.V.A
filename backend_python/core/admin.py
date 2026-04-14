@@ -17,6 +17,7 @@ from core.seguranca import (
     status_criptografia,
     verificar_hash_senha,
 )
+from core.session_audit import registrar_evento_sessao
 
 
 ARQUIVO_ADMIN = pasta_dados_app() / "admin_config.json"
@@ -32,6 +33,7 @@ def _config_padrao():
         "tentativas_falhas": 0,
         "bloqueado_ate": 0,
         "admin_2fa_ativo": False,
+        "admin_2fa_required": True,
         "admin_2fa_secret": "",
         "sessoes_auditoria": [],
         "criado_em": datetime.now().isoformat(timespec="seconds"),
@@ -71,6 +73,10 @@ def _registrar_sessao(evento: str, usuario: str = "", ok: bool = True, cfg: dict
         }
     )
     cfg["sessoes_auditoria"] = logs[-120:]
+    try:
+        registrar_evento_sessao(evento=evento, usuario=usuario, ok=ok)
+    except Exception:
+        pass
     cfg["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
     salvar_json_seguro(ARQUIVO_ADMIN, cfg)
     return cfg
@@ -166,6 +172,14 @@ def autenticar_admin(usuario, senha, codigo_2fa: str = ""):
     usuario_ok = (usuario or "").strip() == str(config.get("usuario_admin", ""))
     senha_ok = verificar_hash_senha((senha or "").strip(), config.get("senha_hash", {}))
     twofa_ok = True
+    twofa_required = bool(config.get("admin_2fa_required", True))
+    if twofa_required and not config.get("admin_2fa_ativo"):
+        _registrar_sessao(
+            "login_admin_2fa_required",
+            usuario=(usuario or ""),
+            ok=False,
+        )
+        return False
     if config.get("admin_2fa_ativo"):
         secret = str(config.get("admin_2fa_secret", ""))
         twofa_ok = bool(secret) and _validar_totp(secret, codigo_2fa)
@@ -193,6 +207,11 @@ def status_admin():
     config = carregar_config_admin()
     aviso = "Senha padrão ativa: SIM (recomendado trocar)." if config.get("usa_senha_padrao") else "Senha padrão ativa: NÃO."
     twofa = "2FA: ATIVO." if config.get("admin_2fa_ativo") else "2FA: INATIVO."
+    twofa_req = (
+        "2FA obrigatório: SIM."
+        if config.get("admin_2fa_required", True)
+        else "2FA obrigatório: NÃO."
+    )
     bloqueado_ate = int(config.get("bloqueado_ate", 0) or 0)
     bloqueio = "Conta desbloqueada."
     if bloqueado_ate > int(time.time()):
@@ -201,6 +220,7 @@ def status_admin():
         f"Admin configurado: {config.get('usuario_admin', 'admin')}\n"
         f"{aviso}\n"
         f"{twofa}\n"
+        f"{twofa_req}\n"
         f"{bloqueio}\n"
         f"{status_criptografia()}"
     )

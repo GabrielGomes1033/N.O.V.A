@@ -28,6 +28,10 @@ def _estado_padrao():
         "queue": [],
         "history": [],
         "last_report": "",
+        "runtime_failures_consecutive": 0,
+        "circuit_open_until": "",
+        "retry_base_seconds": 20,
+        "retry_max_attempts": 3,
     }
 
 
@@ -81,10 +85,38 @@ def iniciar_runtime(callback_notificacao=None):
 
 
 def _pegar_proxima_tarefa(estado):
+    agora = datetime.now()
     for tarefa in estado.get("queue", []):
+        if tarefa.get("status") != "pendente":
+            continue
+        retry_at = str(tarefa.get("next_retry_at", "") or "")
+        if retry_at:
+            try:
+                dt = datetime.fromisoformat(retry_at)
+                if agora < dt:
+                    continue
+            except ValueError:
+                pass
         if tarefa.get("status") == "pendente":
             return tarefa
     return None
+
+
+def _circuito_aberto(estado):
+    aberto_ate = str(estado.get("circuit_open_until", "") or "")
+    if not aberto_ate:
+        return False
+    try:
+        return datetime.now() < datetime.fromisoformat(aberto_ate)
+    except ValueError:
+        return False
+
+
+def _abrir_circuito(estado, segundos=60):
+    estado["circuit_open_until"] = (datetime.now() + timedelta(seconds=int(segundos))).isoformat(
+        timespec="seconds"
+    )
+    salvar_estado(estado)
 
 
 def _deve_gerar_relatorio(estado):
@@ -122,6 +154,8 @@ def _tick_runtime():
     estado = carregar_estado()
     if not estado.get("enabled"):
         return
+    if _circuito_aberto(estado):
+        return
 
     tarefa = _pegar_proxima_tarefa(estado)
     if tarefa:
@@ -130,7 +164,7 @@ def _tick_runtime():
         salvar_estado(estado)
 
         resultado = executar_objetivo_background(tarefa.get("objetivo", ""), contexto={})
-        tarefa["status"] = "concluido" if resultado.get("ok") else "falhou"
+        ok = bool(resultado.get("ok"))
         tarefa["concluido_em"] = _agora_iso()
         tarefa["resultado"] = resultado.get("resumo", "")
         tarefa["meta"] = {
@@ -138,9 +172,36 @@ def _tick_runtime():
             "passos_pulados": resultado.get("passos_pulados", 0),
             "passos_falhos": resultado.get("passos_falhos", 0),
         }
-        estado["history"] = (estado.get("history", []) + [tarefa.copy()])[-200:]
+        tentativas = int(tarefa.get("attempts", 0) or 0) + 1
+        tarefa["attempts"] = tentativas
+        max_tentativas = int(tarefa.get("max_attempts", estado.get("retry_max_attempts", 3)) or 3)
+        if ok:
+            tarefa["status"] = "concluido"
+            estado["runtime_failures_consecutive"] = 0
+            estado["history"] = (estado.get("history", []) + [tarefa.copy()])[-200:]
+            _notificar(f"JARVIS: tarefa #{tarefa.get('id')} concluido. {tarefa.get('resultado', '')}")
+        else:
+            estado["runtime_failures_consecutive"] = int(estado.get("runtime_failures_consecutive", 0) or 0) + 1
+            tarefa["last_error"] = str(resultado.get("resumo", "") or "falha_sem_resumo")
+            if tentativas < max_tentativas:
+                base = int(estado.get("retry_base_seconds", 20) or 20)
+                atraso = max(5, base * (2 ** (tentativas - 1)))
+                tarefa["status"] = "pendente"
+                tarefa["next_retry_at"] = (datetime.now() + timedelta(seconds=atraso)).isoformat(
+                    timespec="seconds"
+                )
+                _notificar(
+                    f"JARVIS: tarefa #{tarefa.get('id')} falhou, retry {tentativas}/{max_tentativas} em {atraso}s."
+                )
+            else:
+                tarefa["status"] = "falhou"
+                estado["history"] = (estado.get("history", []) + [tarefa.copy()])[-200:]
+                _notificar(f"JARVIS: tarefa #{tarefa.get('id')} falhou após {tentativas} tentativas.")
+
+        if int(estado.get("runtime_failures_consecutive", 0) or 0) >= 3:
+            _abrir_circuito(estado, segundos=75)
+            _notificar("JARVIS: circuito de proteção ativado por falhas consecutivas.")
         salvar_estado(estado)
-        _notificar(f"JARVIS: tarefa #{tarefa.get('id')} {tarefa['status']}. {tarefa.get('resultado', '')}")
         return
 
     if _deve_gerar_relatorio(estado):
@@ -186,6 +247,10 @@ def enfileirar_tarefa(objetivo, origem="manual"):
         "concluido_em": "",
         "resultado": "",
         "meta": {},
+        "attempts": 0,
+        "max_attempts": int(estado.get("retry_max_attempts", 3) or 3),
+        "next_retry_at": "",
+        "last_error": "",
     }
     estado["queue"].append(tarefa)
     estado["next_task_id"] = task_id + 1
@@ -219,9 +284,15 @@ def status_fase2():
     concluidas = len([t for t in estado.get("history", []) if t.get("status") == "concluido"])
     falhas = len([t for t in estado.get("history", []) if t.get("status") == "falhou"])
     ligado = "ativo" if estado.get("enabled") else "desativado"
+    circuito = (
+        f"aberto até {estado.get('circuit_open_until')}"
+        if _circuito_aberto(estado)
+        else "fechado"
+    )
     return (
         f"JARVIS fase 2: {ligado}\n"
         f"Intervalo de relatório: {estado.get('report_interval_min', 30)} min\n"
+        f"Circuit breaker: {circuito}\n"
         f"Fila pendente: {pendentes}\n"
         f"Fila executando: {executando}\n"
         f"Histórico concluídas: {concluidas}\n"

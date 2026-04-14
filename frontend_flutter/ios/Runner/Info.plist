@@ -58,6 +58,10 @@
 	<string>A NOVA usa o microfone para ouvir seus comandos de voz.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>A NOVA converte sua fala em texto para executar comandos.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>A NOVA usa a câmera para capturar fotos e anexar no chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>A NOVA pode acessar suas fotos para anexar no chat.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

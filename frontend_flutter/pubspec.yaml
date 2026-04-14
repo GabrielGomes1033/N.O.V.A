@@ -30,6 +30,9 @@ dependencies:
   package_info_plus: ^8.0.2
   battery_plus: ^6.0.2
   geolocator: ^13.0.1
+  image_picker: ^1.1.2
+  pdf: ^3.11.1
+  printing: ^5.14.0
   # Reconhecimento de fala (microfone -> texto).
   speech_to_text: ^7.0.0
   # Tipografia mais profissional para o painel.

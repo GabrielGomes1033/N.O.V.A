@@ -38,7 +38,7 @@ Rotas sensíveis protegidas:
 ### Planejar ação de agente
 
 ```bash
-curl -X POST https://api.andradeegomes.com/agent/plan \
+curl -X POST https://sua-api.exemplo.com/agent/plan \
   -H "Content-Type: application/json" \
   -d '{"objective":"planejar meu dia com foco em estudos de API e Flutter"}'
 ```
@@ -46,7 +46,7 @@ curl -X POST https://api.andradeegomes.com/agent/plan \
 ### Executar ação de agente
 
 ```bash
-curl -X POST https://api.andradeegomes.com/agent/execute \
+curl -X POST https://sua-api.exemplo.com/agent/execute \
   -H "Content-Type: application/json" \
   -d '{"objective":"pesquisar boas práticas de autenticação API e resumir"}'
 ```
@@ -56,7 +56,7 @@ curl -X POST https://api.andradeegomes.com/agent/execute \
 Use `chunk_id` retornado em `result.snippet_items`:
 
 ```bash
-curl -X POST https://api.andradeegomes.com/rag/feedback \
+curl -X POST https://sua-api.exemplo.com/rag/feedback \
   -H "Content-Type: application/json" \
   -d '{"query":"como proteger API", "chunk_id":"abc123", "score":1}'
 ```
@@ -65,4 +65,3 @@ curl -X POST https://api.andradeegomes.com/rag/feedback \
 
 - `1` = relevante
 - `-1` = irrelevante
-

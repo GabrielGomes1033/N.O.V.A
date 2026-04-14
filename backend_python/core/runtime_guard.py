@@ -40,20 +40,35 @@ def checar_rate_limit(
 
 
 def token_api_configurado() -> bool:
-    return bool(os.getenv("NOVA_API_TOKEN", "").strip())
+    if os.getenv("NOVA_API_TOKEN", "").strip():
+        return True
+    return bool(os.getenv("NOVA_API_TOKENS", "").strip())
+
+
+def _tokens_ativos() -> list[str]:
+    single = os.getenv("NOVA_API_TOKEN", "").strip()
+    multi = os.getenv("NOVA_API_TOKENS", "").strip()
+    tokens: list[str] = []
+    if single:
+        tokens.append(single)
+    if multi:
+        for raw in multi.split(","):
+            val = raw.strip()
+            if val and val not in tokens:
+                tokens.append(val)
+    return tokens
 
 
 def validar_token(headers) -> bool:
-    token = os.getenv("NOVA_API_TOKEN", "").strip()
-    if not token:
+    tokens = _tokens_ativos()
+    if not tokens:
         return True
     auth = str(headers.get("Authorization", "") or "").strip()
     x_api = str(headers.get("X-API-Key", "") or "").strip()
     if auth.lower().startswith("bearer "):
         recebido = auth[7:].strip()
-        if recebido == token:
+        if recebido in tokens:
             return True
-    if x_api and x_api == token:
+    if x_api and x_api in tokens:
         return True
     return False
-

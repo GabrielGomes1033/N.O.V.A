@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -7,6 +8,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -39,6 +44,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final SecureSecretsService _secureSecrets = SecureSecretsService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final AudioPlayer _voicePlayer = AudioPlayer();
+  final ImagePicker _imagePicker = ImagePicker();
   final ReminderNotificationsService _notifications =
       ReminderNotificationsService();
   final SystemScanService _systemScan = SystemScanService();
@@ -57,6 +63,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'telegram_ativo': false,
     'telegram_token': '',
     'telegram_chat_id': '',
+    'autonomia_ativa': false,
+    'autonomia_nivel_risco': 'moderado',
+    'autonomia_liberdade': 'media',
+    'autonomia_requer_confirmacao_sensivel': true,
+    'auto_document_learning': true,
     'admin_guard': true,
     'allow_voice_on_lock': true,
     'log_consciencia': <dynamic>[],
@@ -68,6 +79,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _executedFromVoice = false;
   bool _sending = false;
   bool _loadingState = false;
+  String? _composerAttachmentName;
   bool _continuousWakeMode = false;
   bool _manualListeningStop = false;
   int _speakRequestId = 0;
@@ -79,6 +91,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String _locationLabel = 'Localização não definida';
   String _locationWeather = '';
   bool _loadingLocation = false;
+  Map<String, dynamic> _autonomyRuntime = {};
+  Map<String, dynamic> _systemSecurity = {};
+  Map<String, dynamic> _opsStatus = {};
+  bool _loadingAutonomyHealth = false;
+  Timer? _autonomyHealthTimer;
 
   bool get _listenModeEnabled => _config['escuta_ativa'] != false;
   bool get _pushToTalkOnly => _config['push_to_talk_only'] != false;
@@ -94,6 +111,64 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String _initialGreeting() {
     final base = '${_periodGreeting()}! Eu sou a NOVA.';
     return '$base Estou aqui, pronta para aprender com você e te ajudar.';
+  }
+
+  Future<Uint8List> _buildDocumentReportPdf({
+    required String reportText,
+    required String fileName,
+  }) async {
+    final doc = pw.Document();
+    final now = DateTime.now().toIso8601String();
+    final sanitized = fileName.trim().isEmpty ? 'documento' : fileName.trim();
+
+    doc.addPage(
+      pw.MultiPage(
+        pageTheme: pw.PageTheme(
+          margin: const pw.EdgeInsets.all(24),
+          theme: pw.ThemeData.withFont(
+            base: await PdfGoogleFonts.openSansRegular(),
+            bold: await PdfGoogleFonts.openSansBold(),
+          ),
+        ),
+        build: (context) => [
+          pw.Text(
+            'NOVA • Relatório de Documento',
+            style: pw.TextStyle(
+              fontSize: 20,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.blue900,
+            ),
+          ),
+          pw.SizedBox(height: 8),
+          pw.Text('Arquivo: $sanitized',
+              style:
+                  const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
+          pw.Text('Gerado em: $now',
+              style:
+                  const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
+          pw.SizedBox(height: 12),
+          pw.Container(
+            padding: const pw.EdgeInsets.all(12),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: PdfColors.blue200),
+              color: PdfColors.blue50,
+              borderRadius: pw.BorderRadius.circular(6),
+            ),
+            child: pw.Text(
+              reportText.trim().isEmpty
+                  ? 'Relatório vazio.'
+                  : reportText.trim(),
+              style: const pw.TextStyle(
+                fontSize: 11.5,
+                lineSpacing: 2,
+                color: PdfColors.black,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return doc.save();
   }
 
   void _refreshWelcomeChatLine() {
@@ -121,6 +196,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _loadReminders();
     _notifications.init();
     _loadLocationFromBackend();
+    _refreshAutonomyHealthCard();
+    _startAutonomyHealthAutoRefresh();
   }
 
   @override
@@ -130,6 +207,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _audioPlayer.dispose();
     _voicePlayer.dispose();
     BackgroundWakeService.stop();
+    _stopAutonomyHealthAutoRefresh();
     _localDb.close();
     _messageController.dispose();
     super.dispose();
@@ -141,6 +219,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!Platform.isAndroid) return;
 
     if (state == AppLifecycleState.resumed) {
+      _startAutonomyHealthAutoRefresh();
       BackgroundWakeService.stop();
       if (_listenModeEnabled && _effectiveContinuousWake && !_isListening) {
         _manualListeningStop = false;
@@ -151,6 +230,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
+      _stopAutonomyHealthAutoRefresh();
       if (_listenModeEnabled && _effectiveContinuousWake) {
         _manualListeningStop = true;
         _speech.stop();
@@ -335,6 +415,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _systemStatus = 'Painel sincronizado com backend.';
         });
         await _saveLocalState();
+        await _refreshAutonomyHealthCard();
       }
     } catch (_) {
       if (!mounted) return;
@@ -355,6 +436,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } catch (_) {
       // Mantém último snapshot em caso de falha.
     }
+  }
+
+  Future<void> _refreshAutonomyHealthCard() async {
+    if (_loadingAutonomyHealth) return;
+    _loadingAutonomyHealth = true;
+    try {
+      final auto = await _api.getAutonomyStatus();
+      final ops = await _api.getOpsStatus();
+      final sys = await _api.getSystemStatus();
+      if (!mounted) return;
+      setState(() {
+        final runtime = auto['runtime'];
+        final runtimeOps = ops['runtime'];
+        final security = sys['security'];
+        _opsStatus = ops;
+        _autonomyRuntime = (runtime is Map)
+            ? Map<String, dynamic>.from(runtime)
+            : <String, dynamic>{};
+        if (runtimeOps is Map) {
+          _autonomyRuntime.addAll(Map<String, dynamic>.from(runtimeOps));
+        }
+        _systemSecurity = (security is Map)
+            ? Map<String, dynamic>.from(security)
+            : <String, dynamic>{};
+      });
+    } catch (_) {
+      // backend offline: mantém dados atuais
+    } finally {
+      _loadingAutonomyHealth = false;
+    }
+  }
+
+  void _startAutonomyHealthAutoRefresh() {
+    _stopAutonomyHealthAutoRefresh();
+    _autonomyHealthTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _refreshAutonomyHealthCard(),
+    );
+  }
+
+  void _stopAutonomyHealthAutoRefresh() {
+    _autonomyHealthTimer?.cancel();
+    _autonomyHealthTimer = null;
   }
 
   Future<void> _loadMusicLibrary() async {
@@ -410,7 +534,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _syncReminderNotifications(List<Map<String, dynamic>> items) async {
+  Future<void> _syncReminderNotifications(
+      List<Map<String, dynamic>> items) async {
     for (final item in items) {
       final id = (item['id'] ?? '').toString().trim();
       final texto = (item['texto'] ?? '').toString().trim();
@@ -851,8 +976,63 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _handleSendMessage() async {
     final message = _messageController.text.trim();
-    if (message.isEmpty) return;
-    await _executeCommand(message, fromVoice: false);
+    final attached = _composerAttachmentName;
+    if (message.isEmpty && attached == null) return;
+    final outbound = attached == null
+        ? message
+        : message.isEmpty
+            ? 'Arquivo anexado: $attached'
+            : '$message\n\n[Arquivo anexado: $attached]';
+    await _executeCommand(outbound, fromVoice: false);
+    if (!mounted) return;
+    setState(() {
+      _composerAttachmentName = null;
+    });
+  }
+
+  Future<void> _pickComposerAttachment() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      type: FileType.any,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (!mounted) return;
+    setState(() {
+      _composerAttachmentName = file.name;
+    });
+    _showSnack('Arquivo anexado: ${file.name}');
+  }
+
+  Future<void> _pickQuickPhoto() async {
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 90,
+      );
+      if (picked == null) return;
+      if (!mounted) return;
+      setState(() {
+        _composerAttachmentName = picked.name;
+      });
+      _showSnack('Foto capturada: ${picked.name}');
+    } catch (_) {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        type: FileType.image,
+      );
+      if (result == null || result.files.isEmpty) {
+        _showSnack('Não consegui abrir a câmera agora.');
+        return;
+      }
+      final file = result.files.first;
+      if (!mounted) return;
+      setState(() {
+        _composerAttachmentName = file.name;
+      });
+      _showSnack('Imagem adicionada: ${file.name}');
+    }
   }
 
   bool _isMusicCommand(String input) {
@@ -985,6 +1165,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _openAgentControlDialog();
       return 'Abrindo painel do agente IA.';
     }
+    if (t == 'abrir autonomia' || t == 'modo autonomia' || t == '/autonomia') {
+      _openAutonomyDialog();
+      return 'Abrindo painel de autonomia.';
+    }
+    if (t == 'abrir documentos' ||
+        t == 'analisar documento' ||
+        t == '/documentos') {
+      _openDocumentAnalysisDialog();
+      return 'Abrindo análise de documentos.';
+    }
+    if (t == 'abrir memoria por assunto' ||
+        t == 'abrir memoria assuntos' ||
+        t == 'abrir memoria de assuntos' ||
+        t == '/assuntos') {
+      _openSubjectMemoryDialog();
+      return 'Abrindo memória por assunto.';
+    }
+    if (t == 'abrir help' ||
+        t == 'abrir ajuda' ||
+        t == 'mostrar comandos' ||
+        t == '/help') {
+      _openHelpDialog();
+      return 'Abrindo central de ajuda.';
+    }
     if (t == 'abrir compatibilidade' ||
         t == 'mostrar compatibilidade' ||
         t == '/compatibilidade') {
@@ -1019,6 +1223,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         t == '/painel-auditoria') {
       _openSecurityAuditDialog();
       return 'Abrindo painel de auditoria de segurança.';
+    }
+    if (t == 'abrir sessoes' ||
+        t == 'abrir sessoes admin' ||
+        t == 'abrir sessões' ||
+        t == '/sessoes') {
+      _openSessionAuditDialog();
+      return 'Abrindo auditoria de sessões.';
     }
     if (t.contains('adicionar musica') || t.contains('adicionar musicas')) {
       return _adicionarMusicasNaBiblioteca();
@@ -1077,6 +1288,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         t.contains('auditoria de seguranca') ||
         t.contains('auditoria de segurança')) {
       return _gerarVarreduraSegurancaFormal();
+    }
+    if (t == '/autonomia status' || t.contains('status da autonomia')) {
+      try {
+        final out = await _api.getAutonomyStatus();
+        final auto = (out['autonomy'] is Map)
+            ? Map<String, dynamic>.from(out['autonomy'] as Map)
+            : <String, dynamic>{};
+        final rt = (out['runtime'] is Map)
+            ? Map<String, dynamic>.from(out['runtime'] as Map)
+            : <String, dynamic>{};
+        return 'Autonomia: ${auto['autonomia_ativa'] == true ? 'ativa' : 'desativada'} | risco: ${auto['autonomia_nivel_risco'] ?? 'moderado'} | liberdade: ${auto['autonomia_liberdade'] ?? 'media'} | fila: ${rt['pending'] ?? 0} pendente(s), ${rt['running'] ?? 0} executando.';
+      } catch (_) {
+        return 'Não consegui ler o status de autonomia agora.';
+      }
     }
     if (t.contains('listar musicas') || t == '/musicas') {
       return _listarMusicas();
@@ -1459,6 +1684,128 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openSessionAuditDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+
+    List<Map<String, dynamic>> items = [];
+    bool chainOk = false;
+    String error = '';
+    bool loading = false;
+
+    Future<void> load(StateSetter setLocalState) async {
+      setLocalState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final next = await _api.getSessionAudit(limit: 200);
+        final verify = await _api.verifySessionAuditChain();
+        setLocalState(() {
+          items = next;
+          chainOk = verify['ok'] == true;
+        });
+      } catch (_) {
+        setLocalState(() => error = 'Falha ao carregar auditoria de sessão.');
+      } finally {
+        setLocalState(() => loading = false);
+      }
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            if (items.isEmpty && !loading && error.isEmpty) {
+              load(setLocalState);
+            }
+            return _PanelDialog(
+              title: 'AUDITORIA DE SESSÃO',
+              child: SizedBox(
+                width: 760,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            chainOk
+                                ? 'Cadeia íntegra (hash encadeado).'
+                                : 'Validando cadeia de auditoria...',
+                            style: TextStyle(
+                              color: chainOk
+                                  ? const Color(0xFF8FFFBE)
+                                  : const Color(0xFF7FC0DE),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: loading ? null : () => load(setLocalState),
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: Text(loading ? 'Atualizando...' : 'Atualizar'),
+                        ),
+                      ],
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A))),
+                    ],
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 360),
+                      child: items.isEmpty
+                          ? const Text(
+                              'Sem eventos de sessão ainda.',
+                              style: TextStyle(color: Color(0xFF6EA1BE)),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: items.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final it = items[items.length - 1 - index];
+                                final quando = it['quando']?.toString() ?? '-';
+                                final evento = it['evento']?.toString() ?? '-';
+                                final usuario =
+                                    it['usuario']?.toString() ?? '-';
+                                final ok = it['ok'] == true;
+                                return Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: _boxDeco,
+                                  child: Text(
+                                    '$quando • $evento • usuário: $usuario • ${ok ? 'ok' : 'falha'}',
+                                    style: TextStyle(
+                                      color: ok
+                                          ? const Color(0xFFD4F4FF)
+                                          : const Color(0xFFFFA9A9),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   bool _isAdminSessionValid() {
     if (!_adminUnlocked) return false;
     final at = _adminUnlockedAt;
@@ -1577,9 +1924,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 Map<String, dynamic>? createdItem;
                 bool synced = false;
                 try {
-                  final created = await _api.addReminder(text: text, when: whenIso);
+                  final created =
+                      await _api.addReminder(text: text, when: whenIso);
                   if (created['ok'] == true && created['item'] is Map) {
-                    createdItem = Map<String, dynamic>.from(created['item'] as Map);
+                    createdItem =
+                        Map<String, dynamic>.from(created['item'] as Map);
                     synced = true;
                   }
                 } catch (_) {
@@ -1907,16 +2256,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     separatorBuilder: (_, __) =>
                                         const SizedBox(height: 8),
                                     itemBuilder: (context, index) {
-                                      final t = traces[traces.length - 1 - index];
+                                      final t =
+                                          traces[traces.length - 1 - index];
                                       final ok = t['ok'] == true;
-                                      final ev = t['evento']?.toString() ?? 'chat';
-                                      final msg = t['mensagem_preview']?.toString() ?? '';
-                                      final dur = t['duracao_ms']?.toString() ?? '-';
+                                      final ev =
+                                          t['evento']?.toString() ?? 'chat';
+                                      final msg =
+                                          t['mensagem_preview']?.toString() ??
+                                              '';
+                                      final dur =
+                                          t['duracao_ms']?.toString() ?? '-';
                                       return Container(
                                         padding: const EdgeInsets.all(8),
                                         decoration: BoxDecoration(
                                           color: const Color(0x4403182A),
-                                          borderRadius: BorderRadius.circular(10),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
                                           border: Border.all(
                                             color: ok
                                                 ? const Color(0xFF0A4D74)
@@ -1947,7 +2302,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.refresh),
                         label: Text(loading ? 'Atualizando...' : 'Atualizar'),
@@ -2059,10 +2415,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.search),
-                        label: Text(loading ? 'Pesquisando...' : 'Consultar RAG'),
+                        label:
+                            Text(loading ? 'Pesquisando...' : 'Consultar RAG'),
                       ),
                     ),
                     if (error.isNotEmpty) ...[
@@ -2098,13 +2456,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               itemBuilder: (context, index) {
                                 final item = items[index];
                                 final id = item['id']?.toString() ?? '';
-                                final source = item['source']?.toString() ?? '-';
+                                final source =
+                                    item['source']?.toString() ?? '-';
                                 final text = item['text']?.toString() ?? '';
                                 return Container(
                                   padding: const EdgeInsets.all(10),
                                   decoration: _boxDeco,
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         '$source • ${id.isEmpty ? "-" : id}',
@@ -2129,7 +2489,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                             onPressed: id.isEmpty
                                                 ? null
                                                 : () => avaliar(id, 1),
-                                            icon: const Icon(Icons.thumb_up_alt_outlined, size: 16),
+                                            icon: const Icon(
+                                                Icons.thumb_up_alt_outlined,
+                                                size: 16),
                                             label: const Text('Relevante'),
                                           ),
                                           const SizedBox(width: 8),
@@ -2137,7 +2499,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                             onPressed: id.isEmpty
                                                 ? null
                                                 : () => avaliar(id, -1),
-                                            icon: const Icon(Icons.thumb_down_alt_outlined, size: 16),
+                                            icon: const Icon(
+                                                Icons.thumb_down_alt_outlined,
+                                                size: 16),
                                             label: const Text('Irrelevante'),
                                           ),
                                         ],
@@ -2257,7 +2621,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                 ? const SizedBox(
                                     width: 16,
                                     height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   )
                                 : const Icon(Icons.play_arrow),
                             label: Text(loading ? 'Executando...' : 'Executar'),
@@ -2297,7 +2662,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               itemBuilder: (context, index) {
                                 final p = plan[index];
                                 final act = p['action']?.toString() ?? '-';
-                                final desc = p['description']?.toString() ?? '-';
+                                final desc =
+                                    p['description']?.toString() ?? '-';
                                 final status = p['status']?.toString() ?? '';
                                 return Container(
                                   padding: const EdgeInsets.all(10),
@@ -2400,6 +2766,1023 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ],
             ),
           ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openAutonomyDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+
+    final objectiveController = TextEditingController();
+    bool active = _config['autonomia_ativa'] == true;
+    bool confirmSensitive =
+        _config['autonomia_requer_confirmacao_sensivel'] != false;
+    String riskLevel =
+        (_config['autonomia_nivel_risco']?.toString() ?? 'moderado')
+            .toLowerCase();
+    String freedomLevel =
+        (_config['autonomia_liberdade']?.toString() ?? 'media').toLowerCase();
+    Map<String, dynamic> runtime = {};
+    bool loading = false;
+    String info = '';
+    String error = '';
+
+    try {
+      final out = await _api.getAutonomyStatus();
+      final a = out['autonomy'];
+      final r = out['runtime'];
+      if (a is Map) {
+        final cfg = Map<String, dynamic>.from(a);
+        active = cfg['autonomia_ativa'] == true;
+        confirmSensitive =
+            cfg['autonomia_requer_confirmacao_sensivel'] != false;
+        final parsedRisk =
+            (cfg['autonomia_nivel_risco']?.toString() ?? 'moderado')
+                .toLowerCase();
+        riskLevel = {'baixo', 'moderado', 'alto'}.contains(parsedRisk)
+            ? parsedRisk
+            : 'moderado';
+        final parsedFreedom =
+            (cfg['autonomia_liberdade']?.toString() ?? 'media').toLowerCase();
+        freedomLevel = {'baixa', 'media', 'alta'}.contains(parsedFreedom)
+            ? parsedFreedom
+            : 'media';
+      }
+      runtime = (r is Map) ? Map<String, dynamic>.from(r) : {};
+    } catch (_) {
+      // segue com dados locais
+    }
+    if (!mounted) return;
+
+    Future<void> refreshStatus(StateSetter setLocalState) async {
+      setLocalState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final out = await _api.getAutonomyStatus();
+        final a = out['autonomy'];
+        final r = out['runtime'];
+        setLocalState(() {
+          if (a is Map) {
+            final cfg = Map<String, dynamic>.from(a);
+            active = cfg['autonomia_ativa'] == true;
+            confirmSensitive =
+                cfg['autonomia_requer_confirmacao_sensivel'] != false;
+            final parsedRisk =
+                (cfg['autonomia_nivel_risco']?.toString() ?? 'moderado')
+                    .toLowerCase();
+            riskLevel = {'baixo', 'moderado', 'alto'}.contains(parsedRisk)
+                ? parsedRisk
+                : 'moderado';
+            final parsedFreedom =
+                (cfg['autonomia_liberdade']?.toString() ?? 'media')
+                    .toLowerCase();
+            freedomLevel = {'baixa', 'media', 'alta'}.contains(parsedFreedom)
+                ? parsedFreedom
+                : 'media';
+          }
+          runtime = (r is Map) ? Map<String, dynamic>.from(r) : {};
+        });
+      } catch (e) {
+        setLocalState(() {
+          error = _humanizeApiError(
+            e,
+            fallback: 'Não consegui carregar status de autonomia.',
+          );
+        });
+      } finally {
+        if (context.mounted) setLocalState(() => loading = false);
+      }
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Future<void> salvarAutonomia() async {
+              setLocalState(() {
+                loading = true;
+                error = '';
+                info = '';
+              });
+              try {
+                final cfg = await _api.updateAutonomyConfig(
+                  active: active,
+                  riskLevel: riskLevel,
+                  freedomLevel: freedomLevel,
+                  confirmSensitive: confirmSensitive,
+                );
+                if (!mounted) return;
+                setState(() {
+                  _config['autonomia_ativa'] = cfg['autonomia_ativa'] == true;
+                  _config['autonomia_nivel_risco'] =
+                      cfg['autonomia_nivel_risco']?.toString() ?? 'moderado';
+                  _config['autonomia_liberdade'] =
+                      cfg['autonomia_liberdade']?.toString() ?? 'media';
+                  _config['autonomia_requer_confirmacao_sensivel'] =
+                      cfg['autonomia_requer_confirmacao_sensivel'] != false;
+                });
+                await _saveLocalState();
+                setLocalState(() =>
+                    info = 'Configuração de autonomia salva com sucesso.');
+                await refreshStatus(setLocalState);
+              } catch (e) {
+                setLocalState(() {
+                  error = _humanizeApiError(
+                    e,
+                    fallback: 'Falha ao salvar autonomia.',
+                  );
+                });
+              } finally {
+                if (context.mounted) setLocalState(() => loading = false);
+              }
+            }
+
+            Future<void> enfileirar() async {
+              final objective = objectiveController.text.trim();
+              if (objective.isEmpty) return;
+              setLocalState(() {
+                loading = true;
+                error = '';
+                info = '';
+              });
+              try {
+                final out =
+                    await _api.enqueueAutonomyTask(objective: objective);
+                final msg = out['message']?.toString() ?? 'Tarefa enviada.';
+                setLocalState(() => info = msg);
+                objectiveController.clear();
+                await refreshStatus(setLocalState);
+              } catch (e) {
+                setLocalState(() {
+                  error = _humanizeApiError(
+                    e,
+                    fallback: 'Falha ao enfileirar tarefa.',
+                  );
+                });
+              } finally {
+                if (context.mounted) setLocalState(() => loading = false);
+              }
+            }
+
+            return _PanelDialog(
+              title: 'AUTONOMIA',
+              child: SizedBox(
+                width: 760,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Modo autonomia ativo',
+                            style: TextStyle(
+                              color: Color(0xFFBDE8FF),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Switch.adaptive(
+                          value: active,
+                          onChanged: (v) => setLocalState(() => active = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: riskLevel,
+                      decoration: const InputDecoration(
+                        labelText: 'Política de risco',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'baixo', child: Text('Baixo')),
+                        DropdownMenuItem(
+                            value: 'moderado', child: Text('Moderado')),
+                        DropdownMenuItem(value: 'alto', child: Text('Alto')),
+                      ],
+                      onChanged: (v) => setLocalState(
+                          () => riskLevel = (v ?? 'moderado').toLowerCase()),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: freedomLevel,
+                      decoration: const InputDecoration(
+                        labelText: 'Liberdade operacional',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'baixa',
+                            child: Text('Baixa (mais cautelosa)')),
+                        DropdownMenuItem(
+                            value: 'media', child: Text('Média (equilibrada)')),
+                        DropdownMenuItem(
+                            value: 'alta', child: Text('Alta (mais autônoma)')),
+                      ],
+                      onChanged: (v) => setLocalState(
+                          () => freedomLevel = (v ?? 'media').toLowerCase()),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Exigir confirmação para tarefas sensíveis',
+                            style: TextStyle(
+                                color: Color(0xFF7FB4CF), fontSize: 12),
+                          ),
+                        ),
+                        Switch.adaptive(
+                          value: confirmSensitive,
+                          onChanged: (v) =>
+                              setLocalState(() => confirmSensitive = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: loading ? null : salvarAutonomia,
+                            icon: const Icon(Icons.save_outlined),
+                            label: const Text('Salvar autonomia'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: loading
+                                ? null
+                                : () => refreshStatus(setLocalState),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Atualizar status'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    _NovaInput(
+                      controller: objectiveController,
+                      hintText: 'Objetivo para execução autônoma...',
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: loading ? null : enfileirar,
+                        icon: const Icon(Icons.playlist_add_check),
+                        label: Text(
+                            loading ? 'Processando...' : 'Enfileirar tarefa'),
+                      ),
+                    ),
+                    if (info.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(info,
+                          style: const TextStyle(color: Color(0xFF8EE0FF))),
+                    ],
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A))),
+                    ],
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: _boxDeco,
+                      child: Text(
+                        'Runtime: ${runtime['enabled'] == true ? 'ativo' : 'desativado'}\n'
+                        'Fila: ${runtime['pending'] ?? 0} pendente(s), ${runtime['running'] ?? 0} executando\n'
+                        'Histórico: ${runtime['completed'] ?? 0} concluída(s), ${runtime['failed'] ?? 0} falha(s)',
+                        style: const TextStyle(
+                          color: Color(0xFFD4F4FF),
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    objectiveController.dispose();
+  }
+
+  Future<void> _openDocumentAnalysisDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+
+    String selectedName = '';
+    Uint8List? selectedBytes;
+    bool loading = false;
+    String error = '';
+    String reportText = '';
+    String learningText = '';
+    String subjectsText = '';
+
+    String formatarRelatorio(Map<String, dynamic> payload) {
+      final report = (payload['report'] is Map)
+          ? Map<String, dynamic>.from(payload['report'] as Map)
+          : <String, dynamic>{};
+      final stats = (report['stats'] is Map)
+          ? Map<String, dynamic>.from(report['stats'] as Map)
+          : <String, dynamic>{};
+      final keywords = (report['keywords'] is List)
+          ? (report['keywords'] as List)
+          : const [];
+      final risks =
+          (report['risks'] is List) ? (report['risks'] as List) : const [];
+      final excerpts = (report['sample_excerpts'] is List)
+          ? (report['sample_excerpts'] as List)
+          : const [];
+      final recs = (report['recommendations'] is List)
+          ? (report['recommendations'] as List)
+          : const [];
+
+      final lines = <String>[
+        'Relatório de documento',
+        '- Arquivo: ${report['file_name'] ?? '-'}',
+        '- Gerado em: ${report['generated_at'] ?? '-'}',
+        '- Tamanho: ${stats['bytes'] ?? 0} bytes',
+        '- Caracteres: ${stats['chars'] ?? 0}',
+        '- Palavras: ${stats['words'] ?? 0}',
+        '- Páginas estimadas: ${stats['estimated_pages'] ?? 0}',
+        '',
+        'Resumo executivo:',
+        '${report['executive_summary'] ?? 'Sem resumo.'}',
+        '',
+        'Palavras-chave:',
+      ];
+      if (keywords.isEmpty) {
+        lines.add('- nenhuma');
+      } else {
+        for (final k in keywords.take(12)) {
+          if (k is! Map) continue;
+          lines.add('- ${k['token']}: ${k['count']}');
+        }
+      }
+      lines.add('');
+      lines.add('Riscos detectados:');
+      if (risks.isEmpty) {
+        lines.add('- nenhum risco explícito encontrado');
+      } else {
+        for (final r in risks.take(8)) {
+          lines.add('- ${r.toString()}');
+        }
+      }
+      lines.add('');
+      lines.add('Trechos relevantes:');
+      if (excerpts.isEmpty) {
+        lines.add('- sem trechos');
+      } else {
+        for (final e in excerpts.take(4)) {
+          lines.add('- ${e.toString()}');
+        }
+      }
+      lines.add('');
+      lines.add('Recomendações:');
+      for (final r in recs.take(6)) {
+        lines.add('- ${r.toString()}');
+      }
+      return lines.join('\n');
+    }
+
+    Future<void> analisarSelecionado(StateSetter setLocalState) async {
+      if (selectedBytes == null || selectedName.isEmpty) {
+        setLocalState(() => error = 'Selecione um arquivo antes.');
+        return;
+      }
+      setLocalState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final out = await _api.analyzeDocument(
+          fileName: selectedName,
+          bytes: selectedBytes!,
+        );
+        final txt = formatarRelatorio(out);
+        final learning = (out['learning'] is Map)
+            ? Map<String, dynamic>.from(out['learning'] as Map)
+            : <String, dynamic>{};
+        final learnOk = learning['ok'] == true;
+        final localFallback = learning['local_fallback'] == true;
+        final learnMsg = learnOk
+            ? 'Aprendizado automático: OK • base atualizada.'
+            : localFallback
+                ? 'Relatório gerado localmente. O backend não possui endpoint de análise.'
+                : (learning['skipped'] == true
+                    ? 'Aprendizado automático desativado.'
+                    : 'Aprendizado automático: sem atualização.');
+        setLocalState(() {
+          reportText = txt;
+          learningText = learnMsg;
+          final sm = (learning['subject_memory'] is Map)
+              ? Map<String, dynamic>.from(learning['subject_memory'] as Map)
+              : <String, dynamic>{};
+          final subs =
+              (sm['subjects'] is List) ? (sm['subjects'] as List) : const [];
+          if (subs.isNotEmpty) {
+            subjectsText =
+                'Assuntos aprendidos: ${subs.map((e) => e.toString()).join(", ")}';
+          } else {
+            subjectsText = 'Assuntos aprendidos: nenhum identificado.';
+          }
+        });
+      } catch (e) {
+        setLocalState(() {
+          error = _humanizeApiError(
+            e,
+            fallback: 'Falha ao analisar documento.',
+          );
+        });
+      } finally {
+        if (context.mounted) setLocalState(() => loading = false);
+      }
+    }
+
+    Future<void> selecionarArquivo(StateSetter setLocalState) async {
+      final res = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        withData: true,
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'md', 'pdf', 'docx', 'json', 'csv', 'log'],
+      );
+      if (res == null || res.files.isEmpty) return;
+      final f = res.files.first;
+      Uint8List? bytes = f.bytes;
+      if (bytes == null && (f.path ?? '').isNotEmpty && !kIsWeb) {
+        try {
+          bytes = await File(f.path!).readAsBytes();
+        } catch (_) {
+          bytes = null;
+        }
+      }
+      if (bytes == null || bytes.isEmpty) {
+        setLocalState(() => error = 'Não consegui ler o arquivo selecionado.');
+        return;
+      }
+      setLocalState(() {
+        selectedName = f.name;
+        selectedBytes = bytes;
+        error = '';
+        reportText = '';
+        learningText = '';
+        subjectsText = '';
+      });
+      await analisarSelecionado(setLocalState);
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Future<void> analisar() async => analisarSelecionado(setLocalState);
+
+            Future<void> exportarPdf() async {
+              if (reportText.trim().isEmpty) {
+                setLocalState(
+                    () => error = 'Gere o relatório antes de exportar.');
+                return;
+              }
+              setLocalState(() {
+                loading = true;
+                error = '';
+              });
+              try {
+                final bytes = await _buildDocumentReportPdf(
+                  reportText: reportText,
+                  fileName: selectedName,
+                );
+                final nomeBase = selectedName.trim().isEmpty
+                    ? 'relatorio_documento'
+                    : selectedName
+                        .trim()
+                        .replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+                await Printing.layoutPdf(
+                  name: '${nomeBase}_nova.pdf',
+                  onLayout: (_) async => bytes,
+                );
+              } catch (_) {
+                setLocalState(() => error = 'Falha ao exportar PDF.');
+              } finally {
+                if (context.mounted) setLocalState(() => loading = false);
+              }
+            }
+
+            return _PanelDialog(
+              title: 'ANÁLISE DE DOCUMENTOS',
+              child: SizedBox(
+                width: 760,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            selectedName.isEmpty
+                                ? 'Nenhum arquivo selecionado'
+                                : 'Arquivo: $selectedName',
+                            style: const TextStyle(color: Color(0xFFBCE8FF)),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: loading
+                              ? null
+                              : () => selecionarArquivo(setLocalState),
+                          icon: const Icon(Icons.attach_file, size: 16),
+                          label: const Text('Anexar'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: loading ? null : analisar,
+                        icon: loading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.analytics_outlined),
+                        label: Text(loading
+                            ? 'Analisando...'
+                            : 'Gerar relatório completo'),
+                      ),
+                    ),
+                    if (learningText.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        learningText,
+                        style: const TextStyle(color: Color(0xFF8EE0FF)),
+                      ),
+                    ],
+                    if (subjectsText.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subjectsText,
+                        style: const TextStyle(
+                            color: Color(0xFF87CFEA), fontSize: 12),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: loading ? null : exportarPdf,
+                        icon: const Icon(Icons.picture_as_pdf_outlined),
+                        label: const Text('Exportar relatório em PDF'),
+                      ),
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A))),
+                    ],
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 420),
+                      child: SingleChildScrollView(
+                        child: Text(
+                          reportText.isEmpty
+                              ? 'Anexe um documento e clique em "Gerar relatório completo".'
+                              : reportText,
+                          style: const TextStyle(
+                            color: Color(0xFFD4F4FF),
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openSubjectMemoryDialog() async {
+    final allowed = await _ensureAdminAccess();
+    if (!mounted) return;
+    if (!allowed) {
+      _showSnack('Acesso administrativo negado.');
+      return;
+    }
+
+    List<Map<String, dynamic>> items = [];
+    bool loading = false;
+    String error = '';
+    int limit = 12;
+
+    Future<void> carregar(StateSetter setLocalState) async {
+      setLocalState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final out = await _api.getSubjectMemory(limit: limit);
+        final arr = out['items'];
+        setLocalState(() {
+          items = (arr is List)
+              ? arr
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
+              : <Map<String, dynamic>>[];
+        });
+      } catch (_) {
+        setLocalState(
+            () => error = 'Não consegui carregar memória por assunto.');
+      } finally {
+        setLocalState(() => loading = false);
+      }
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            if (items.isEmpty && !loading && error.isEmpty) {
+              carregar(setLocalState);
+            }
+            final maxCount = items.isEmpty
+                ? 1
+                : items
+                    .map(
+                        (e) => int.tryParse(e['count']?.toString() ?? '0') ?? 0)
+                    .fold<int>(1, (a, b) => b > a ? b : a);
+
+            return _PanelDialog(
+              title: 'MEMÓRIA POR ASSUNTO',
+              child: SizedBox(
+                width: 780,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          'Evolução e relevância por domínio',
+                          style: TextStyle(
+                            color: Color(0xFFBCE8FF),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        DropdownButton<int>(
+                          value: limit,
+                          dropdownColor: const Color(0xFF062236),
+                          items: const [
+                            DropdownMenuItem(value: 8, child: Text('Top 8')),
+                            DropdownMenuItem(value: 12, child: Text('Top 12')),
+                            DropdownMenuItem(value: 20, child: Text('Top 20')),
+                          ],
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setLocalState(() => limit = v);
+                            carregar(setLocalState);
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed:
+                              loading ? null : () => carregar(setLocalState),
+                          icon: loading
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.refresh, size: 16),
+                          label: const Text('Atualizar'),
+                        ),
+                      ],
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFFF8A8A))),
+                    ],
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 420),
+                      child: items.isEmpty
+                          ? const Text(
+                              'Sem assuntos aprendidos ainda.',
+                              style: TextStyle(color: Color(0xFF6EA1BE)),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: items.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final it = items[index];
+                                final assunto =
+                                    it['subject']?.toString() ?? '-';
+                                final count = int.tryParse(
+                                        it['count']?.toString() ?? '0') ??
+                                    0;
+                                final last = it['last_seen']?.toString() ?? '-';
+                                final source =
+                                    it['last_source']?.toString() ?? '-';
+                                final kws = (it['top_keywords'] is List)
+                                    ? (it['top_keywords'] as List)
+                                        .take(6)
+                                        .map((e) => e.toString())
+                                        .join(', ')
+                                    : '';
+                                final value =
+                                    (count / maxCount).clamp(0.0, 1.0);
+                                return Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: _boxDeco,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              assunto.toUpperCase(),
+                                              style: const TextStyle(
+                                                color: Color(0xFFD4F4FF),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                          Text(
+                                            '$count',
+                                            style: const TextStyle(
+                                              color: Color(0xFF39D6FF),
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      ClipRRect(
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                        child: LinearProgressIndicator(
+                                          value: value,
+                                          minHeight: 9,
+                                          backgroundColor:
+                                              const Color(0x55053A58),
+                                          valueColor:
+                                              const AlwaysStoppedAnimation<
+                                                  Color>(
+                                            Color(0xFF2CD8FF),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Último uso: $last • origem: $source',
+                                        style: const TextStyle(
+                                          color: Color(0xFF7AAEC9),
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                      if (kws.isNotEmpty) ...[
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          'Palavras-chave: $kws',
+                                          style: const TextStyle(
+                                            color: Color(0xFF7FB9D6),
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _openHelpDialog() async {
+    List<Map<String, dynamic>> topics = [];
+    List<Map<String, dynamic>> commands = [];
+    String error = '';
+    bool loading = false;
+
+    Future<void> carregar(StateSetter setLocalState) async {
+      setLocalState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final out = await _api.getHelpTopics();
+        final t = out['topics'];
+        final c = out['commands'];
+        setLocalState(() {
+          topics = (t is List)
+              ? t
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
+              : [];
+          commands = (c is List)
+              ? c
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
+              : [];
+        });
+      } catch (_) {
+        setLocalState(() {
+          error = 'Sem backend agora. Exibindo ajuda local.';
+          topics = [
+            {
+              'topic': 'Identidade',
+              'text':
+                  'A NOVA é uma assistente de IA com memória, voz, RAG, automações seguras e aprendizado por documentos.',
+            },
+            {
+              'topic': 'Autonomia',
+              'text':
+                  'Executa tarefas com política de risco e aprovação para ações sensíveis.',
+            },
+          ];
+          commands = [
+            {'cmd': '/help', 'desc': 'Mostra ajuda completa.'},
+            {'cmd': '/autonomia status', 'desc': 'Status de autonomia.'},
+            {
+              'cmd': '/status sistema',
+              'desc': 'Status de software e segurança.'
+            },
+            {'cmd': '/rag <pergunta>', 'desc': 'Consulta base RAG.'},
+            {'cmd': '/lembrar ...', 'desc': 'Cria lembrete com data/hora.'},
+          ];
+        });
+      } finally {
+        setLocalState(() => loading = false);
+      }
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            if (topics.isEmpty && commands.isEmpty && !loading) {
+              carregar(setLocalState);
+            }
+            return _PanelDialog(
+              title: 'HELP • NOVA',
+              child: SizedBox(
+                width: 820,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Guia completo por tópicos e comandos',
+                            style: TextStyle(
+                              color: Color(0xFFBCE8FF),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed:
+                              loading ? null : () => carregar(setLocalState),
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: Text(loading ? 'Atualizando...' : 'Atualizar'),
+                        ),
+                      ],
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(error,
+                          style: const TextStyle(color: Color(0xFFE8BC75))),
+                    ],
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: _boxDeco,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Tópicos',
+                            style: TextStyle(
+                              color: Color(0xFFBDE8FF),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ...topics.map(
+                            (t) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                '• ${t['topic'] ?? '-'}: ${t['text'] ?? ''}',
+                                style: const TextStyle(
+                                  color: Color(0xFFD4F4FF),
+                                  fontSize: 12,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: _boxDeco,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Comandos',
+                            style: TextStyle(
+                              color: Color(0xFFBDE8FF),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 320),
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: commands.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 6),
+                              itemBuilder: (context, index) {
+                                final c = commands[index];
+                                return Text(
+                                  '• ${c['cmd'] ?? '-'}: ${c['desc'] ?? ''}',
+                                  style: const TextStyle(
+                                    color: Color(0xFFCBEFFF),
+                                    fontSize: 12,
+                                    height: 1.35,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -2947,12 +4330,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     bool vozAtiva = _config['voz_ativa'] == true;
     bool vozNeuralHybrid = _config['voice_neural_hybrid'] != false;
     String voiceProfile =
-        _config['voice_profile']?.toString().trim().toLowerCase() ??
-            'feminina';
+        _config['voice_profile']?.toString().trim().toLowerCase() ?? 'feminina';
     bool escutaAtiva = _config['escuta_ativa'] != false;
     bool telegramAtivo = _config['telegram_ativo'] == true;
     bool wakeContinuo = _config['continuous_wake'] != false;
     bool pushToTalkOnly = _config['push_to_talk_only'] != false;
+    bool autoDocumentLearning = _config['auto_document_learning'] != false;
     bool adminGuard = _config['admin_guard'] != false;
     bool allowVoiceOnLock = _config['allow_voice_on_lock'] != false;
 
@@ -2976,6 +4359,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 'telegram_ativo': telegramAtivo,
                 'telegram_token': telegramTokenController.text.trim(),
                 'telegram_chat_id': telegramChatController.text.trim(),
+                'auto_document_learning': autoDocumentLearning,
                 'admin_guard': adminGuard,
                 'allow_voice_on_lock': allowVoiceOnLock,
               };
@@ -3126,6 +4510,38 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             value: vozAtiva,
                             onChanged: (value) {
                               vozAtiva = value;
+                              setLocalState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: _boxDeco,
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Aprendizado por documentos',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w600)),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Quando um arquivo é analisado, a NOVA aprende automaticamente e atualiza a base.',
+                                  style: TextStyle(
+                                      color: Color(0xFF6689A2), fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch.adaptive(
+                            value: autoDocumentLearning,
+                            onChanged: (value) {
+                              autoDocumentLearning = value;
                               setLocalState(() {});
                             },
                           ),
@@ -3438,6 +4854,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  String _humanizeApiError(
+    Object error, {
+    String fallback = 'Falha ao comunicar com a API.',
+  }) {
+    var raw = error.toString().trim();
+    raw = raw.replaceFirst('Exception: ', '');
+    raw = raw.replaceFirst('ApiHttpException: ', '');
+    if (raw.isEmpty) return fallback;
+    if (raw.contains('Endpoint não encontrado nesse backend') ||
+        raw.contains('não possui a rota de autonomia')) {
+      return '$raw\n\nDica: atualize/deploy o backend mais recente e '
+          'recompile o app com NOVA_API_URL correto.';
+    }
+    if (raw.contains('Falha de conexão com a API')) {
+      return 'Sem conexão com a API. Verifique URL do backend, internet e porta.';
+    }
+    return raw;
+  }
+
   int get _learnedReplies => _knowledge.length;
 
   BoxDecoration get _boxDeco {
@@ -3457,16 +4892,73 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       showDragHandle: true,
       builder: (context) {
         final actions = <({String label, IconData icon, VoidCallback onTap})>[
-          (label: 'Usuários', icon: Icons.people_outline, onTap: _openUsersDialog),
-          (label: 'Ensinar', icon: Icons.school_outlined, onTap: _openTeachDialog),
-          (label: 'Editar Base', icon: Icons.edit_note, onTap: _openKnowledgeDialog),
+          (
+            label: 'Usuários',
+            icon: Icons.people_outline,
+            onTap: _openUsersDialog
+          ),
+          (
+            label: 'Ensinar',
+            icon: Icons.school_outlined,
+            onTap: _openTeachDialog
+          ),
+          (
+            label: 'Editar Base',
+            icon: Icons.edit_note,
+            onTap: _openKnowledgeDialog
+          ),
           (label: 'Lembretes', icon: Icons.alarm, onTap: _openRemindersDialog),
-          (label: 'Agente IA', icon: Icons.smart_toy_outlined, onTap: _openAgentControlDialog),
-          (label: 'Observabilidade', icon: Icons.monitor_heart_outlined, onTap: _openObservabilityDialog),
-          (label: 'RAG Feedback', icon: Icons.thumb_up_alt_outlined, onTap: _openRagFeedbackDialog),
-          (label: 'Auditoria', icon: Icons.security, onTap: _openSecurityAuditDialog),
-          (label: 'Compatibilidade', icon: Icons.devices, onTap: _openCompatibilityDialog),
-          (label: 'Configurações', icon: Icons.settings_outlined, onTap: _openConfigDialog),
+          (
+            label: 'Agente IA',
+            icon: Icons.smart_toy_outlined,
+            onTap: _openAgentControlDialog
+          ),
+          (
+            label: 'Autonomia',
+            icon: Icons.hub_outlined,
+            onTap: _openAutonomyDialog
+          ),
+          (
+            label: 'Documentos',
+            icon: Icons.description_outlined,
+            onTap: _openDocumentAnalysisDialog
+          ),
+          (
+            label: 'Assuntos',
+            icon: Icons.insights_outlined,
+            onTap: _openSubjectMemoryDialog
+          ),
+          (label: 'Help', icon: Icons.help_outline, onTap: _openHelpDialog),
+          (
+            label: 'Observabilidade',
+            icon: Icons.monitor_heart_outlined,
+            onTap: _openObservabilityDialog
+          ),
+          (
+            label: 'RAG Feedback',
+            icon: Icons.thumb_up_alt_outlined,
+            onTap: _openRagFeedbackDialog
+          ),
+          (
+            label: 'Auditoria',
+            icon: Icons.security,
+            onTap: _openSecurityAuditDialog
+          ),
+          (
+            label: 'Sessões',
+            icon: Icons.fact_check_outlined,
+            onTap: _openSessionAuditDialog
+          ),
+          (
+            label: 'Compatibilidade',
+            icon: Icons.devices,
+            onTap: _openCompatibilityDialog
+          ),
+          (
+            label: 'Configurações',
+            icon: Icons.settings_outlined,
+            onTap: _openConfigDialog
+          ),
         ];
 
         return LayoutBuilder(
@@ -3485,7 +4977,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         itemBuilder: (context, index) {
                           final item = actions[index];
                           return ListTile(
-                            leading: Icon(item.icon, color: const Color(0xFF6CD2FF)),
+                            leading:
+                                Icon(item.icon, color: const Color(0xFF6CD2FF)),
                             title: Text(
                               item.label,
                               style: const TextStyle(color: Color(0xFFD2F2FF)),
@@ -3500,11 +4993,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     : GridView.builder(
                         shrinkWrap: true,
                         padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: constraints.maxWidth >= 1100
+                              ? 4
+                              : (constraints.maxWidth >= 760 ? 3 : 2),
                           mainAxisSpacing: 10,
                           crossAxisSpacing: 10,
-                          childAspectRatio: 2.8,
+                          childAspectRatio:
+                              constraints.maxWidth >= 1100 ? 3.1 : 2.8,
                         ),
                         itemCount: actions.length,
                         itemBuilder: (context, index) {
@@ -3517,7 +5013,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             icon: Icon(item.icon, size: 18),
                             label: Align(
                               alignment: Alignment.centerLeft,
-                              child: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+                              child: Text(item.label,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
                             ),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: const Color(0xFFD2F2FF),
@@ -3538,219 +5035,259 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          const _GridBackground(),
-          SafeArea(
-            child: Column(
+  List<({String label, IconData icon, VoidCallback onTap})>
+      get _primaryRailActions => [
+            (
+              label: 'Painel geral',
+              icon: Icons.dashboard_outlined,
+              onTap: _openQuickMenu
+            ),
+            (
+              label: 'Ensinar',
+              icon: Icons.school_outlined,
+              onTap: _openTeachDialog
+            ),
+            (
+              label: 'Lembretes',
+              icon: Icons.alarm_outlined,
+              onTap: _openRemindersDialog
+            ),
+            (
+              label: 'Documentos',
+              icon: Icons.description_outlined,
+              onTap: _openDocumentAnalysisDialog
+            ),
+            (
+              label: 'Autonomia',
+              icon: Icons.hub_outlined,
+              onTap: _openAutonomyDialog
+            ),
+            (
+              label: 'Configurações',
+              icon: Icons.settings_outlined,
+              onTap: _openConfigDialog
+            ),
+          ];
+
+  Widget _buildRailAction({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+        label: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFFD8F4FF),
+          side: const BorderSide(color: Color(0xFF1E5F89)),
+          backgroundColor: const Color(0x66213957),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopSidebar() {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xD6172D45),
+            Color(0xC90D1B2E),
+          ],
+        ),
+        border: Border.all(color: const Color(0xFF2F6C95)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x4A041020),
+            blurRadius: 24,
+            spreadRadius: 0.2,
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                _TopBar(
-                  onMenu: _openQuickMenu,
-                ),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                        child: _LocationPanel(
-                          label: _locationLabel,
-                          weather: _locationWeather,
-                          loading: _loadingLocation,
-                          onRefresh: _updateLocation,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                        child: _MarketPanel(quotes: _marketQuotes),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                        child: _MobileStatsStrip(
-                          usersCount: _users.length,
-                          messagesCount: _chat.length,
-                          learnedCount: _learnedReplies,
-                          onTeach: _openTeachDialog,
-                        ),
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                          child: Align(
-                            alignment: Alignment.topCenter,
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 980),
-                              child: ListView.builder(
-                                reverse: true,
-                                itemCount: _chat.length,
-                                itemBuilder: (context, index) {
-                                  final item = _chat[_chat.length - 1 - index];
-                                  return Align(
-                                    alignment: item.fromUser
-                                        ? Alignment.centerRight
-                                        : Alignment.centerLeft,
-                                    child: Container(
-                                      margin: const EdgeInsets.only(bottom: 10),
-                                      constraints:
-                                          const BoxConstraints(maxWidth: 720),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 10),
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(14),
-                                        color: item.fromUser
-                                            ? const Color(0xFF0A3752)
-                                            : const Color(0xFF051D2E),
-                                        border: Border.all(
-                                          color: item.fromUser
-                                              ? const Color(0xFF0AA7DE)
-                                              : const Color(0xFF084A70),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        item.text,
-                                        style: const TextStyle(
-                                          color: Color(0xFFCAEEFF),
-                                          height: 1.35,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                        child: Align(
-                          alignment: Alignment.center,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 980),
-                            child: Container(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 8),
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: const Color(0xCC031A2A),
-                                borderRadius: BorderRadius.circular(14),
-                                border:
-                                    Border.all(color: const Color(0xFF0C4D72)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _messageController,
-                                      style: const TextStyle(
-                                          color: Color(0xFF34C8FF)),
-                                      cursorColor: const Color(0xFF34C8FF),
-                                      decoration: const InputDecoration(
-                                        border: InputBorder.none,
-                                        hintText: 'Digite ou fale...',
-                                        hintStyle:
-                                            TextStyle(color: Color(0xFF567C95)),
-                                      ),
-                                      onSubmitted: (_) => _handleSendMessage(),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    onPressed: _speechReady
-                                        ? _toggleListening
-                                        : _initSpeech,
-                                    icon: Icon(
-                                      _isListening ? Icons.mic : Icons.mic_none,
-                                      color: _isListening
-                                          ? const Color(0xFF00D9FF)
-                                          : const Color(0xFF5FA6C8),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    onPressed:
-                                        _sending ? null : _handleSendMessage,
-                                    icon: _sending
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Color(0xFF4CD7FF),
-                                            ),
-                                          )
-                                        : const Icon(
-                                            Icons.send_rounded,
-                                            color: Color(0xFF3FCFFF),
-                                          ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Text(
-                          _systemStatus,
-                          style: const TextStyle(
-                              color: Color(0xFF5B90AF), fontSize: 11),
-                        ),
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFF4EE2FF)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x7A3CCBFF),
+                        blurRadius: 16,
+                        spreadRadius: 0.2,
                       ),
                     ],
+                  ),
+                  child: ClipOval(
+                    child: Image.asset('assets/giphy3.gif', fit: BoxFit.cover),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'NOVA',
+                    style: TextStyle(
+                      color: Color(0xFFDDFAFF),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 20,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _openQuickMenu,
+                  icon:
+                      const Icon(Icons.menu_rounded, color: Color(0xFF9EEAFF)),
+                  style: IconButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF2D6288)),
+                    backgroundColor: const Color(0x55243C58),
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0x7A1A3046),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFF2A668F)),
+              ),
+              child: const Text(
+                'Assistente neural com foco em contexto, automação e precisão.',
+                style: TextStyle(
+                  color: Color(0xFFC7E7FF),
+                  height: 1.35,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _RailMetricTile(
+                      label: 'Mensagens', value: '${_chat.length}'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _RailMetricTile(
+                      label: 'Usuários', value: '${_users.length}'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _RailMetricTile(label: 'Aprendizados', value: '$_learnedReplies'),
+            if (_locationLabel.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _RailMetricTile(
+                label: 'Local',
+                value: _locationLabel,
+                compactValue: true,
+              ),
+            ],
+            const SizedBox(height: 14),
+            const Text(
+              'Ações rápidas',
+              style: TextStyle(
+                color: Color(0xFFA5D8F5),
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+                letterSpacing: 0.35,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.separated(
+                itemCount: _primaryRailActions.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final item = _primaryRailActions[index];
+                  return _buildRailAction(
+                    label: item.label,
+                    icon: item.icon,
+                    onTap: item.onTap,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
-}
 
-class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.onMenu,
-  });
-
-  final VoidCallback onMenu;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 560;
-        final tiny = constraints.maxWidth < 420;
-        final logoSize = compact ? 26.0 : 30.0;
-        final titleSize = tiny ? 20.0 : (compact ? 24.0 : 32.0);
-        final barHeight = compact ? 54.0 : 60.0;
-        return Container(
-          height: barHeight,
-          padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12),
-          decoration: BoxDecoration(
-            color: const Color(0xCC02111D),
-            border: Border(
-              bottom: BorderSide(
-                color: const Color(0xFF0B3D5F).withValues(alpha: 0.6),
+  Widget _buildChatTimeline({required bool compact}) {
+    return ListView.builder(
+      reverse: true,
+      padding: const EdgeInsets.only(top: 2, bottom: 4),
+      itemCount: _chat.length,
+      itemBuilder: (context, index) {
+        final item = _chat[_chat.length - 1 - index];
+        if (item.fromUser) {
+          return Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10, left: 72),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: const Color(0xFF182B3B),
+                border: Border.all(color: const Color(0xFF356487)),
+              ),
+              child: Text(
+                item.text,
+                style: const TextStyle(
+                  color: Color(0xFFE8F7FF),
+                  height: 1.34,
+                  fontSize: 14,
+                ),
               ),
             ),
-          ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: logoSize,
-                height: logoSize,
+                width: 38,
+                height: 38,
+                margin: const EdgeInsets.only(top: 4),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF0FA8DA)),
+                  border: Border.all(color: const Color(0xFF1F8CB8)),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x5510CEFF),
-                      blurRadius: 8,
-                      spreadRadius: 0.5,
+                      color: Color(0x6612BFFF),
+                      blurRadius: 14,
+                      spreadRadius: 0.4,
                     ),
                   ],
                 ),
@@ -3760,25 +5297,29 @@ class _TopBar extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth:
+                        compact ? MediaQuery.sizeOf(context).width * 0.8 : 420,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1E24),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFF3D434C)),
+                  ),
                   child: Text(
-                    'NOVA',
-                    style: TextStyle(
-                      color: const Color(0xFF21CCFF),
-                      fontSize: titleSize,
-                      letterSpacing: compact ? 1.0 : 1.8,
-                      fontWeight: FontWeight.w600,
+                    item.text,
+                    style: const TextStyle(
+                      color: Color(0xFFF3F8FF),
+                      fontSize: 33 / 2.2,
+                      height: 1.33,
                     ),
                   ),
                 ),
-              ),
-              _TopAction(
-                compact: tiny,
-                label: 'Menu',
-                icon: Icons.menu_rounded,
-                onTap: onMenu,
               ),
             ],
           ),
@@ -3786,46 +5327,409 @@ class _TopBar extends StatelessWidget {
       },
     );
   }
-}
 
-class _TopAction extends StatelessWidget {
-  const _TopAction({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-    this.compact = false,
-  });
+  Widget _buildTopBarExact() {
+    return Row(
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF24282D),
+                Color(0xFF1A1C20),
+              ],
+            ),
+            border: Border.all(color: const Color(0xFF3D4248)),
+          ),
+          child: IconButton(
+            onPressed: _openQuickMenu,
+            icon: const Icon(Icons.menu_rounded, color: Color(0xFF9CA3AB)),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Container(
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFF182A34),
+                  Color(0xFF1C252D),
+                ],
+              ),
+              border: Border.all(color: const Color(0xFF31414C)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x6625D1FF),
+                  blurRadius: 22,
+                  spreadRadius: 0.6,
+                ),
+              ],
+            ),
+            child: const Center(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Opacity(
+                    opacity: 0,
+                    child: Text('NOVA'),
+                  ),
+                  Text(
+                    'N . O . V . A',
+                    style: TextStyle(
+                      color: Color(0xFF14E6FF),
+                      fontSize: 24 / 1.7,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Container(
+          width: 96,
+          height: 48,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF24282D),
+                Color(0xFF1A1C20),
+              ],
+            ),
+            border: Border.all(color: const Color(0xFF3D4248)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: IconButton(
+                  onPressed: _openUsersDialog,
+                  icon: const Icon(
+                    Icons.person_add_alt_1_rounded,
+                    color: Color(0xFFA3ABB3),
+                    size: 20,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: IconButton(
+                  onPressed: _pickQuickPhoto,
+                  icon: const Icon(
+                    Icons.camera_alt_outlined,
+                    color: Color(0xFFA3ABB3),
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool compact;
+  Widget _buildComposer() {
+    return Container(
+      height: 58,
+      padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(29),
+        gradient: const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Color(0xFF202226),
+            Color(0xFF202226),
+          ],
+        ),
+        border: Border.all(color: const Color(0xFF202226)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _pickComposerAttachment,
+            icon: const Icon(
+              Icons.add_rounded,
+              color: Color(0xFFD3D8DE),
+              size: 23,
+            ),
+          ),
+          Expanded(
+            child: Container(
+              height: 28,
+              decoration: BoxDecoration(
+                color: const Color(0xFF202226),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Center(
+                child: TextField(
+                  controller: _messageController,
+                  style: const TextStyle(
+                    color: Color(0xFF4E7A99),
+                    fontSize: 15,
+                  ),
+                  cursorColor: const Color(0xFF5D8BAD),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: const Color(0xFF202226),
+                    border: InputBorder.none,
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                    isCollapsed: true,
+                    hintText: _composerAttachmentName == null
+                        ? 'Digite sua mensagem...'
+                        : 'Arquivo: $_composerAttachmentName',
+                    hintStyle: const TextStyle(
+                      color: Color(0xFF747A82),
+                      fontSize: 15,
+                    ),
+                  ),
+                  onSubmitted: (_) => _handleSendMessage(),
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: _speechReady ? _toggleListening : _initSpeech,
+            icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+            color: _isListening
+                ? const Color(0xFFEAF0F5)
+                : const Color(0xFFC5CBD1),
+          ),
+          SizedBox(
+            width: 50,
+            height: 50,
+            child: FilledButton(
+              onPressed: _sending ? null : _handleSendMessage,
+              style: FilledButton.styleFrom(
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(25),
+                ),
+                backgroundColor: const Color(0xFFE9EDF1),
+                foregroundColor: const Color(0xFF131519),
+              ),
+              child: _sending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.1,
+                        color: Color(0xFF1D232A),
+                      ),
+                    )
+                  : const Icon(Icons.multitrack_audio_rounded, size: 21),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainColumn({
+    required bool compact,
+    required bool compressed,
+  }) {
+    return Column(
+      children: [
+        _buildTopBarExact(),
+        const SizedBox(height: 12),
+        Expanded(child: _buildChatTimeline(compact: compact)),
+        const SizedBox(height: 10),
+        _buildComposer(),
+      ],
+    );
+  }
+
+  Widget _buildHiddenLegacyReferences() {
+    return Offstage(
+      offstage: true,
+      child: SizedBox(
+        width: 340,
+        child: Column(
+          children: [
+            Text(_systemStatus),
+            _TopDashboardPanels(
+              locationPanel: _LocationPanel(
+                label: _locationLabel,
+                weather: _locationWeather,
+                loading: _loadingLocation,
+                onRefresh: _updateLocation,
+              ),
+              marketPanel: _MarketPanel(quotes: _marketQuotes),
+              statsPanel: _MobileStatsStrip(
+                usersCount: _users.length,
+                messagesCount: _chat.length,
+                learnedCount: _learnedReplies,
+                onTeach: _openTeachDialog,
+              ),
+              autonomyPanel: _AutonomyHealthCard(
+                runtime: _autonomyRuntime,
+                security: _systemSecurity,
+                ops: _opsStatus,
+                loading: _loadingAutonomyHealth,
+                onRefresh: _refreshAutonomyHealthCard,
+                onOpenAutonomy: _openAutonomyDialog,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (compact) {
-      return IconButton(
-        onPressed: onTap,
-        tooltip: label,
-        icon: const Icon(Icons.menu_rounded, color: Color(0xFF77D8FF)),
-        style: IconButton.styleFrom(
-          side: const BorderSide(color: Color(0xFF0A446A)),
-          backgroundColor: const Color(0x3303182A),
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, size: 18),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: const Color(0xFF77D8FF),
-          side: const BorderSide(color: Color(0xFF0A446A)),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          const _GridBackground(),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 390),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 410;
+                    final compressed = constraints.maxHeight < 650;
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                      child: _buildMainColumn(
+                        compact: compact,
+                        compressed: compressed,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+          Offstage(
+            offstage: true,
+            child: SizedBox(width: 286, child: _buildDesktopSidebar()),
+          ),
+          _buildHiddenLegacyReferences(),
+        ],
       ),
+    );
+  }
+}
+
+class _RailMetricTile extends StatelessWidget {
+  const _RailMetricTile({
+    required this.label,
+    required this.value,
+    this.compactValue = false,
+  });
+
+  final String label;
+  final String value;
+  final bool compactValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0x73304A63),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2B688F)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF9AC9E3),
+              fontSize: 10.5,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: compactValue ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: const Color(0xFFE7F8FF),
+              fontSize: compactValue ? 12 : 16,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopDashboardPanels extends StatelessWidget {
+  const _TopDashboardPanels({
+    required this.locationPanel,
+    required this.marketPanel,
+    required this.statsPanel,
+    required this.autonomyPanel,
+  });
+
+  final Widget locationPanel;
+  final Widget marketPanel;
+  final Widget statsPanel;
+  final Widget autonomyPanel;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        if (width < 760) {
+          return Column(
+            children: [
+              locationPanel,
+              const SizedBox(height: 8),
+              marketPanel,
+              const SizedBox(height: 8),
+              statsPanel,
+              const SizedBox(height: 8),
+              autonomyPanel,
+            ],
+          );
+        }
+        final gap = width < 1024 ? 8.0 : 10.0;
+        final itemWidth = (width - gap) / 2;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            SizedBox(width: itemWidth, child: locationPanel),
+            SizedBox(width: itemWidth, child: marketPanel),
+            SizedBox(width: itemWidth, child: statsPanel),
+            SizedBox(width: itemWidth, child: autonomyPanel),
+          ],
+        );
+      },
     );
   }
 }
@@ -3913,6 +5817,123 @@ class _LocationPanel extends StatelessWidget {
   }
 }
 
+class _AutonomyHealthCard extends StatelessWidget {
+  const _AutonomyHealthCard({
+    required this.runtime,
+    required this.security,
+    required this.ops,
+    required this.loading,
+    required this.onRefresh,
+    required this.onOpenAutonomy,
+  });
+
+  final Map<String, dynamic> runtime;
+  final Map<String, dynamic> security;
+  final Map<String, dynamic> ops;
+  final bool loading;
+  final VoidCallback onRefresh;
+  final VoidCallback onOpenAutonomy;
+
+  int _asInt(dynamic v, [int def = 0]) {
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? def;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = runtime['enabled'] == true;
+    final pending = _asInt(runtime['pending']);
+    final running = _asInt(runtime['running']);
+    final completed = _asInt(runtime['completed']);
+    final failed = _asInt(runtime['failed']);
+    final score = _asInt(security['score'], -1);
+    final nivel = (security['nivel']?.toString() ?? 'atenção').toUpperCase();
+    final slo = (ops['slo'] is Map)
+        ? Map<String, dynamic>.from(ops['slo'] as Map)
+        : <String, dynamic>{};
+    final throughput = (ops['throughput_last_hour'] is Map)
+        ? Map<String, dynamic>.from(ops['throughput_last_hour'] as Map)
+        : <String, dynamic>{};
+    final p95 = _asInt(slo['p95_ms']);
+    final okRate = _asInt(slo['ok_rate_pct']);
+    final failRate = _asInt(throughput['failure_rate_pct']);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x8F02111D),
+        border: Border.all(color: const Color(0xFF083D5E)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Autonomia + Saúde',
+                  style: TextStyle(
+                    color: Color(0xFF59D8FF),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              SizedBox(
+                height: 32,
+                child: OutlinedButton.icon(
+                  onPressed: loading ? null : onRefresh,
+                  icon: loading
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh, size: 16),
+                  label: const Text('Atualizar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF8BE5FF),
+                    side: const BorderSide(color: Color(0xFF0A446A)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _QuoteChip(label: 'JARVIS2', value: enabled ? 'ATIVO' : 'OFF'),
+              _QuoteChip(label: 'Fila', value: '$pending/$running'),
+              _QuoteChip(label: 'OK', value: '$completed'),
+              _QuoteChip(label: 'Falhas', value: '$failed'),
+              _QuoteChip(
+                  label: 'Security',
+                  value: score < 0 ? '--' : '$score ($nivel)'),
+              _QuoteChip(label: 'SLO p95', value: '$p95 ms'),
+              _QuoteChip(label: 'Sucesso', value: '$okRate%'),
+              _QuoteChip(label: 'Falha/h', value: '$failRate%'),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onOpenAutonomy,
+              icon: const Icon(Icons.hub_outlined, size: 16),
+              label: const Text('Abrir painel de autonomia'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MobileStatsStrip extends StatelessWidget {
   const _MobileStatsStrip({
     required this.usersCount,
@@ -3944,15 +5965,18 @@ class _MobileStatsStrip extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: _StatTile(label: 'Msgs', value: '$messagesCount'),
+                          child:
+                              _StatTile(label: 'Msgs', value: '$messagesCount'),
                         ),
                         const SizedBox(width: 6),
                         Expanded(
-                          child: _StatTile(label: 'Ensino', value: '$learnedCount'),
+                          child: _StatTile(
+                              label: 'Ensino', value: '$learnedCount'),
                         ),
                         const SizedBox(width: 6),
                         Expanded(
-                          child: _StatTile(label: 'Users', value: '$usersCount'),
+                          child:
+                              _StatTile(label: 'Users', value: '$usersCount'),
                         ),
                       ],
                     ),
@@ -4465,12 +6489,12 @@ class _GridBackground extends StatelessWidget {
       child: Container(
         decoration: const BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment.topCenter,
-            radius: 1.2,
+            center: Alignment(0, -0.95),
+            radius: 1.15,
             colors: [
-              Color(0xFF05233A),
-              Color(0xFF020D1A),
-              Color(0xFF000711),
+              Color(0x330DC8F6),
+              Color(0x22070E14),
+              Color(0xFF020304),
             ],
           ),
         ),
@@ -4481,19 +6505,7 @@ class _GridBackground extends StatelessWidget {
 
 class _GridPainter extends CustomPainter {
   @override
-  void paint(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = const Color(0xFF0B3552).withValues(alpha: 0.35)
-      ..strokeWidth = 1;
-
-    const step = 32.0;
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-  }
+  void paint(Canvas canvas, Size size) {}
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;

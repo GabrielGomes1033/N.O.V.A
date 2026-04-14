@@ -3,6 +3,29 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+class ApiHttpException implements Exception {
+  ApiHttpException({
+    required this.method,
+    required this.path,
+    required this.statusCode,
+    required this.url,
+    required this.message,
+    this.responseBody = '',
+  });
+
+  final String method;
+  final String path;
+  final int statusCode;
+  final String url;
+  final String message;
+  final String responseBody;
+
+  @override
+  String toString() {
+    return 'API $method $path falhou (HTTP $statusCode). $message';
+  }
+}
+
 class ChatApiService {
   ChatApiService({
     String? baseUrl,
@@ -45,48 +68,161 @@ class ChatApiService {
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
 
+  Future<http.Response> _performHttp(
+    String method,
+    Uri uri, {
+    required Map<String, String> headers,
+    String? encodedBody,
+  }) {
+    switch (method) {
+      case 'GET':
+        return http.get(uri, headers: headers);
+      case 'POST':
+        return http.post(uri, headers: headers, body: encodedBody);
+      case 'PUT':
+        return http.put(uri, headers: headers, body: encodedBody);
+      case 'DELETE':
+        return http.delete(uri, headers: headers);
+      default:
+        throw Exception('Metodo HTTP nao suportado: $method');
+    }
+  }
+
+  List<String> _fallbackPaths(String path) {
+    final out = <String>[];
+
+    if (!path.startsWith('/api/')) {
+      out.add('/api$path');
+    }
+    if (path.startsWith('/api/')) {
+      out.add(path.replaceFirst('/api', ''));
+    }
+
+    if (path == '/autonomy/status') {
+      out.add('/autonomia/status');
+    } else if (path == '/autonomy/config') {
+      out.add('/autonomia/config');
+    } else if (path == '/autonomy/task') {
+      out.add('/autonomia/tarefa');
+      out.add('/autonomia/task');
+    } else if (path == '/documents/analyze') {
+      out.add('/documentos/analisar');
+      out.add('/document/analyze');
+      out.add('/docs/analyze');
+    }
+
+    final seen = <String>{path};
+    final deduped = <String>[];
+    for (final item in out) {
+      if (item.trim().isEmpty) continue;
+      if (seen.add(item)) deduped.add(item);
+    }
+    return deduped;
+  }
+
+  String _endpointHint({
+    required String path,
+    required int statusCode,
+    required String body,
+  }) {
+    if (statusCode == 404 &&
+        (path.startsWith('/autonomy') ||
+            path.startsWith('/documents') ||
+            path.startsWith('/agent') ||
+            path.startsWith('/ops') ||
+            path.startsWith('/help') ||
+            path.startsWith('/memory/subjects'))) {
+      return 'Endpoint não encontrado nesse backend. '
+          'A API está desatualizada para este recurso. '
+          'Atualize/deploy o `backend_python/api_server.py` mais recente.';
+    }
+    if (statusCode == 401) {
+      return 'Não autorizado. Verifique token/credenciais da API.';
+    }
+    if (statusCode == 403) {
+      return 'Acesso negado (RBAC/permissão).';
+    }
+    if (body.trim().isNotEmpty) {
+      return body.trim();
+    }
+    return 'Falha HTTP $statusCode';
+  }
+
+  Map<String, dynamic> _decodePayload(String body) {
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Resposta invalida do servidor.');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> _requestJson(
     String method,
     String path, {
     Map<String, dynamic>? body,
   }) async {
-    final uri = _uri(path);
-    late http.Response response;
-
     final encoded = body == null ? null : jsonEncode(body);
     final headers = {'Content-Type': 'application/json'};
+    final attempts = <String>[path, ..._fallbackPaths(path)];
+    ApiHttpException? lastError;
 
-    switch (method) {
-      case 'GET':
-        response = await http.get(uri, headers: headers);
+    for (var i = 0; i < attempts.length; i++) {
+      final currentPath = attempts[i];
+      final uri = _uri(currentPath);
+
+      late http.Response response;
+      try {
+        response = await _performHttp(
+          method,
+          uri,
+          headers: headers,
+          encodedBody: encoded,
+        );
+      } catch (e) {
+        throw Exception(
+          'Falha de conexão com a API em ${uri.toString()}: ${e.toString()}',
+        );
+      }
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final payload = _decodePayload(response.body);
+        if (payload['ok'] != true) {
+          throw Exception(payload['error']?.toString() ?? 'erro_desconhecido');
+        }
+        return payload;
+      }
+
+      final bodyPreview = response.body.length > 200
+          ? '${response.body.substring(0, 200)}...'
+          : response.body;
+      final hint = _endpointHint(
+        path: currentPath,
+        statusCode: response.statusCode,
+        body: bodyPreview,
+      );
+      lastError = ApiHttpException(
+        method: method,
+        path: currentPath,
+        statusCode: response.statusCode,
+        url: uri.toString(),
+        message: hint,
+        responseBody: bodyPreview,
+      );
+
+      final isLast = i == attempts.length - 1;
+      if (response.statusCode != 404 || isLast) {
         break;
-      case 'POST':
-        response = await http.post(uri, headers: headers, body: encoded);
-        break;
-      case 'PUT':
-        response = await http.put(uri, headers: headers, body: encoded);
-        break;
-      case 'DELETE':
-        response = await http.delete(uri, headers: headers);
-        break;
-      default:
-        throw Exception('Metodo HTTP nao suportado: $method');
+      }
     }
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Falha HTTP ${response.statusCode}');
-    }
-
-    final payload = jsonDecode(response.body);
-    if (payload is! Map<String, dynamic>) {
-      throw Exception('Resposta invalida do servidor.');
-    }
-
-    if (payload['ok'] != true) {
-      throw Exception(payload['error']?.toString() ?? 'erro_desconhecido');
-    }
-
-    return payload;
+    throw lastError ??
+        ApiHttpException(
+          method: method,
+          path: path,
+          statusCode: 0,
+          url: _uri(path).toString(),
+          message: 'Falha desconhecida ao chamar API.',
+        );
   }
 
   Future<String> sendMessage(String message) async {
@@ -120,6 +256,24 @@ class ChatApiService {
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getSessionAudit({
+    int limit = 120,
+  }) async {
+    final lim = limit.clamp(1, 1000);
+    final payload =
+        await _requestJson('GET', '/security/session-audit?limit=$lim');
+    final items = payload['items'];
+    if (items is! List) return [];
+    return items
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> verifySessionAuditChain() {
+    return _requestJson('GET', '/security/session-audit/verify');
   }
 
   Future<Map<String, dynamic>> getAdminState() {
@@ -361,7 +515,8 @@ class ChatApiService {
     int window = 200,
   }) async {
     final win = window.clamp(1, 500);
-    final payload = await _requestJson('GET', '/observability/summary?window=$win');
+    final payload =
+        await _requestJson('GET', '/observability/summary?window=$win');
     final summary = payload['summary'];
     if (summary is Map<String, dynamic>) return summary;
     if (summary is Map) return Map<String, dynamic>.from(summary);
@@ -372,7 +527,8 @@ class ChatApiService {
     int limit = 120,
   }) async {
     final lim = limit.clamp(1, 500);
-    final payload = await _requestJson('GET', '/observability/traces?limit=$lim');
+    final payload =
+        await _requestJson('GET', '/observability/traces?limit=$lim');
     final items = payload['items'];
     if (items is! List) return [];
     return items
@@ -423,5 +579,188 @@ class ChatApiService {
 
   Future<Map<String, dynamic>> ragFeedbackStats() {
     return _requestJson('GET', '/rag/feedback/stats');
+  }
+
+  Future<Map<String, dynamic>> getSystemStatus() {
+    return _requestJson('GET', '/system/status');
+  }
+
+  Future<Map<String, dynamic>> getOpsStatus() {
+    return _requestJson('GET', '/ops/status');
+  }
+
+  Future<Map<String, dynamic>> getSubjectMemory({
+    int limit = 8,
+  }) {
+    final lim = limit.clamp(1, 50);
+    return _requestJson('GET', '/memory/subjects?limit=$lim');
+  }
+
+  Future<Map<String, dynamic>> getHelpTopics() {
+    return _requestJson('GET', '/help/topics');
+  }
+
+  Future<Map<String, dynamic>> getAutonomyStatus() {
+    return _requestJson('GET', '/autonomy/status');
+  }
+
+  Future<Map<String, dynamic>> getAutonomyConfig() async {
+    final payload = await _requestJson('GET', '/autonomy/config');
+    final cfg = payload['config'];
+    if (cfg is Map<String, dynamic>) return cfg;
+    if (cfg is Map) return Map<String, dynamic>.from(cfg);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> updateAutonomyConfig({
+    bool? active,
+    String? riskLevel,
+    String? freedomLevel,
+    bool? confirmSensitive,
+  }) async {
+    final body = <String, dynamic>{};
+    if (active != null) body['active'] = active;
+    if (riskLevel != null && riskLevel.trim().isNotEmpty) {
+      body['risk_level'] = riskLevel.trim().toLowerCase();
+    }
+    if (freedomLevel != null && freedomLevel.trim().isNotEmpty) {
+      body['freedom_level'] = freedomLevel.trim().toLowerCase();
+    }
+    if (confirmSensitive != null) {
+      body['confirm_sensitive'] = confirmSensitive;
+    }
+    final payload = await _requestJson('POST', '/autonomy/config', body: body);
+    final cfg = payload['config'];
+    if (cfg is Map<String, dynamic>) return cfg;
+    if (cfg is Map) return Map<String, dynamic>.from(cfg);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> enqueueAutonomyTask({
+    required String objective,
+    String source = 'frontend',
+  }) async {
+    try {
+      return await _requestJson(
+        'POST',
+        '/autonomy/task',
+        body: {'objective': objective, 'source': source},
+      );
+    } on ApiHttpException catch (e) {
+      if (e.statusCode == 404) {
+        throw Exception(
+          'Seu backend atual não possui a rota de autonomia. '
+          'Atualize o deploy da API para habilitar o enfileiramento de tarefas.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> analyzeDocument({
+    required String fileName,
+    required Uint8List bytes,
+    bool? autoLearn,
+  }) async {
+    final body = <String, dynamic>{
+      'filename': fileName,
+      'content_base64': base64Encode(bytes),
+    };
+    if (autoLearn != null) {
+      body['auto_learn'] = autoLearn;
+    }
+    try {
+      return await _requestJson(
+        'POST',
+        '/documents/analyze',
+        body: body,
+      );
+    } on ApiHttpException catch (e) {
+      if (e.statusCode == 404) {
+        return _buildLocalDocumentFallback(
+          fileName: fileName,
+          bytes: bytes,
+          reason: e.message,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Map<String, dynamic> _buildLocalDocumentFallback({
+    required String fileName,
+    required Uint8List bytes,
+    required String reason,
+  }) {
+    final text = utf8.decode(bytes, allowMalformed: true);
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final words = normalized.isEmpty ? 0 : normalized.split(' ').length;
+    final tokens = RegExp(r'[a-zA-ZÀ-ÿ0-9_]{4,}')
+        .allMatches(text.toLowerCase())
+        .map((m) => m.group(0) ?? '')
+        .where((t) => t.isNotEmpty)
+        .toList();
+    final freq = <String, int>{};
+    for (final t in tokens) {
+      freq[t] = (freq[t] ?? 0) + 1;
+    }
+    final keywords = freq.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final topKeywords = keywords.take(12).toList();
+
+    final risks = <String>[];
+    final riskTokens = {
+      'senha',
+      'password',
+      'token',
+      'cpf',
+      'rg',
+      'cartao',
+      'cartão',
+      'pix',
+      'sigilo',
+      'confidencial',
+    };
+    for (final token in topKeywords.map((e) => e.key)) {
+      if (riskTokens.contains(token)) {
+        risks.add('Possível dado sensível detectado: "$token".');
+      }
+    }
+
+    final summary = normalized.isEmpty
+        ? 'Arquivo sem texto legível para resumo.'
+        : (normalized.length > 420
+            ? '${normalized.substring(0, 420)}...'
+            : normalized);
+
+    return {
+      'ok': true,
+      'report': {
+        'file_name': fileName,
+        'generated_at': DateTime.now().toIso8601String(),
+        'stats': {
+          'bytes': bytes.length,
+          'chars': text.length,
+          'words': words,
+          'estimated_pages': (words / 450).ceil().clamp(1, 9999),
+        },
+        'executive_summary': summary,
+        'keywords':
+            topKeywords.map((e) => {'token': e.key, 'count': e.value}).toList(),
+        'risks': risks,
+        'sample_excerpts': summary.isEmpty ? [] : [summary],
+        'recommendations': [
+          'Backend sem endpoint de análise detectado; relatório gerado localmente.',
+          'Para aprendizado automático, atualize/deploy a API mais recente.',
+        ],
+      },
+      'learning': {
+        'ok': false,
+        'skipped': true,
+        'local_fallback': true,
+        'message': reason,
+        'subject_memory': {'subjects': <String>[]},
+      },
+    };
   }
 }

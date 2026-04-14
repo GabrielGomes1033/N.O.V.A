@@ -111,6 +111,19 @@ from core.voz_neural_api import sintetizar_neural_base64
 from core.voz import falar
 from core.agent_observability import registrar_trace, listar_traces, resumo_traces
 from core.runtime_guard import checar_rate_limit, validar_token, token_api_configurado
+from core.autonomia_runtime import (
+    atualizar_autonomia,
+    ler_config_autonomia,
+    solicitar_execucao_autonoma,
+    status_autonomia,
+    status_sistema_detalhado,
+)
+from core.session_audit import listar_auditoria_sessao, validar_cadeia_auditoria, registrar_evento_sessao
+from core.ops_status import status_operacional
+from core.document_analysis import analisar_documento_base64
+from core.approval_flow import criar_aprovacao_sensivel, listar_aprovacoes, decidir_aprovacao
+from core.memoria_assuntos import aprender_assuntos, perfil_assuntos, dica_contextual_para_pergunta
+from core.help_center import ajuda_texto_humano, ajuda_topicos
 
 
 def _novo_contexto():
@@ -145,7 +158,7 @@ def _cmd_admin(texto):
         return (
             "Comandos admin: /admin login <usuario> <senha> [2fa] | /admin logout | /admin status | "
             "/admin explicar | /admin configurar <usuario> <senha> | "
-            "/admin 2fa status|ligar|desligar|codigo|rotacionar | "
+            "/admin 2fa status|ligar|desligar|obrigatorio on|off|codigo|rotacionar | "
             "/admin despertador status|ligar|desligar|testar"
         )
 
@@ -182,7 +195,7 @@ def _cmd_admin(texto):
 
     if acao == "2fa":
         if len(partes) < 3:
-            return "Use /admin 2fa status|ligar|desligar|codigo|rotacionar"
+            return "Use /admin 2fa status|ligar|desligar|obrigatorio on|off|codigo|rotacionar"
         sub = partes[2].lower()
         if sub == "status":
             ok, payload = gerar_codigo_2fa_admin()
@@ -201,6 +214,31 @@ def _cmd_admin(texto):
         if sub == "rotacionar":
             ok, payload = rotacionar_segredo_2fa()
             return str(payload)
+        if sub == "obrigatorio":
+            if len(partes) < 4:
+                return "Use /admin 2fa obrigatorio on|off"
+            flag = partes[3].lower().strip()
+            if flag in {"on", "ligar", "sim", "true", "1"}:
+                from core.admin import carregar_config_admin
+                from core.seguranca import salvar_json_seguro
+                from core.admin import ARQUIVO_ADMIN
+
+                cfg = carregar_config_admin()
+                cfg["admin_2fa_required"] = True
+                salvar_json_seguro(ARQUIVO_ADMIN, cfg)
+                registrar_evento_sessao("2fa_required_on", usuario=str(cfg.get("usuario_admin", "")), ok=True)
+                return "2FA obrigatório ativado para login admin."
+            if flag in {"off", "desligar", "nao", "não", "false", "0"}:
+                from core.admin import carregar_config_admin
+                from core.seguranca import salvar_json_seguro
+                from core.admin import ARQUIVO_ADMIN
+
+                cfg = carregar_config_admin()
+                cfg["admin_2fa_required"] = False
+                salvar_json_seguro(ARQUIVO_ADMIN, cfg)
+                registrar_evento_sessao("2fa_required_off", usuario=str(cfg.get("usuario_admin", "")), ok=True)
+                return "2FA obrigatório desativado."
+            return "Valor inválido. Use on|off."
         return "Subcomando 2FA inválido."
 
     if acao == "despertador":
@@ -305,6 +343,10 @@ def processar_mensagem(user):
         return ret("Mensagem vazia.")
 
     aprender_gostos_por_mensagem(user)
+    try:
+        aprender_assuntos(texto=user, origem="chat_user")
+    except Exception:
+        pass
     premium_aprender(CONTEXTO.get("nome_usuario", "") or "default", user)
 
     if CONTEXTO.get("rotina_pendente"):
@@ -331,6 +373,16 @@ def processar_mensagem(user):
 
     if user_l in {"nova", "ei nova", "ok nova", "olá nova", "ola nova"}:
         return ret("Oi chefe. Estou pronta para ajudar.")
+
+    if user_l in {"/help", "help", "ajuda", "menu help", "comandos", "o que voce faz", "o que você faz"}:
+        return ret(ajuda_texto_humano(), evento="help")
+
+    if any(k in user_l for k in ["quem voce e", "quem você é", "o que voce e", "o que você é"]):
+        return ret(
+            "Eu sou a NOVA, sua assistente de IA. Minhas funções incluem: chat inteligente, voz, memória por assunto, "
+            "aprendizado automático com documentos, RAG com fontes, automações seguras, lembretes e suporte a tarefas autônomas com controle de risco.",
+            evento="identity",
+        )
 
     if any(k in user_l for k in ["responda em ingles", "responda em inglês", "fale em ingles", "fale em inglês", "speak english"]):
         return ret("Posso entender termos em inglês, mas para manter sua experiência premium eu vou responder em português.")
@@ -371,6 +423,60 @@ def processar_mensagem(user):
         "varredura de segurança",
     }:
         return ret(auditoria_humana())
+
+    if user_l in {"/status sistema", "/scan sistema", "/diagnostico sistema", "/diagnóstico sistema"}:
+        diag = status_sistema_detalhado()
+        sec = diag.get("security", {})
+        assist = diag.get("assistant", {})
+        soft = diag.get("software", {})
+        return ret(
+            "Status detalhado do sistema:\n"
+            f"- OS: {soft.get('os')}\n"
+            f"- Python: {soft.get('python_version')}\n"
+            f"- Usuário atual: {assist.get('nome_usuario') or 'não definido'}\n"
+            f"- Base de conhecimento: {assist.get('knowledge_total')}\n"
+            f"- Usuários admin/painel: {assist.get('users_total')}\n"
+            f"- Lembretes: {assist.get('lembretes_total')}\n"
+            f"- Score segurança: {sec.get('score')} ({sec.get('nivel')})"
+        )
+
+    if user_l in {"/autonomia status", "status autonomia"}:
+        auto = status_autonomia()
+        ac = auto.get("autonomy", {})
+        rt = auto.get("runtime", {})
+        return ret(
+            "Status de autonomia:\n"
+            f"- Ativa: {'sim' if ac.get('autonomia_ativa') else 'não'}\n"
+            f"- Política de risco: {ac.get('autonomia_nivel_risco')}\n"
+            f"- Liberdade operacional: {ac.get('autonomia_liberdade', 'media')}\n"
+            f"- Confirmação sensível: {'sim' if ac.get('autonomia_requer_confirmacao_sensivel') else 'não'}\n"
+            f"- Runtime JARVIS2: {'ativo' if rt.get('enabled') else 'desativado'}\n"
+            f"- Fila pendente: {rt.get('pending')} | executando: {rt.get('running')}"
+        )
+
+    if user_l in {"/autonomia ligar", "ligar autonomia"}:
+        auto = atualizar_autonomia(ativa=True)
+        return ret(
+            f"Modo autonomia ativado. Política de risco atual: {auto.get('autonomia_nivel_risco')}."
+        )
+
+    if user_l in {"/autonomia desligar", "desligar autonomia"}:
+        atualizar_autonomia(ativa=False)
+        return ret("Modo autonomia desativado.")
+
+    if user_l.startswith("/autonomia risco "):
+        nivel = user_l.replace("/autonomia risco ", "").strip()
+        auto = atualizar_autonomia(nivel_risco=nivel)
+        return ret(
+            f"Política de risco atualizada para: {auto.get('autonomia_nivel_risco')}."
+        )
+
+    if user_l.startswith("/autonomia liberdade "):
+        valor = user_l.replace("/autonomia liberdade ", "").strip()
+        auto = atualizar_autonomia(liberdade=valor)
+        return ret(
+            f"Liberdade operacional atualizada para: {auto.get('autonomia_liberdade', 'media')}."
+        )
 
     if user_l.startswith("/briefing") or "briefing" == user_l:
         cidade = ""
@@ -698,6 +804,12 @@ def processar_mensagem(user):
                 )
         except Exception:
             pass
+    try:
+        dica = dica_contextual_para_pergunta(user)
+        if dica and len(user.split()) >= 4:
+            resposta = f"{resposta}\n\n{dica}"
+    except Exception:
+        pass
     if API_TTS_SERVIDOR_ATIVO:
         try:
             falar(resposta)
@@ -738,6 +850,15 @@ def _estado_admin():
         "users": usuarios,
         "config": config,
     }
+
+
+def _papel_permitido(role: str, allow: tuple[str, ...]) -> bool:
+    r = (role or "").strip().lower()
+    if not r:
+        return False
+    if r == "admin":
+        return True
+    return r in allow
 
 
 class NovaHandler(BaseHTTPRequestHandler):
@@ -784,6 +905,10 @@ class NovaHandler(BaseHTTPRequestHandler):
             or path.startswith("/security")
             or path.startswith("/backup")
             or path.startswith("/automation")
+            or path.startswith("/autonomy")
+            or path.startswith("/ops")
+            or path.startswith("/approvals")
+            or path.startswith("/documents")
             or path.startswith("/rag/index")
             or path.startswith("/rag/feedback")
             or path.startswith("/agent/")
@@ -798,6 +923,55 @@ class NovaHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": False, "error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
         return False
 
+    def _rbac_ok(self, path: str, method: str) -> bool:
+        cfg = carregar_config_painel()
+        if not bool(cfg.get("rbac_ativo", False)):
+            return True
+
+        role = str(self.headers.get("X-User-Role", "") or "").strip().lower()
+        user = str(self.headers.get("X-User-Name", "") or "").strip()
+        if not role or not user:
+            self._send_json(
+                {"ok": False, "error": "rbac_identity_required"},
+                status=HTTPStatus.FORBIDDEN,
+            )
+            return False
+
+        usuarios = listar_usuarios()
+        valido = False
+        for u in usuarios:
+            if not bool(u.get("ativo", True)):
+                continue
+            nome = str(u.get("nome", "")).strip().lower()
+            papel = str(u.get("papel", "")).strip().lower()
+            if nome == user.lower() and papel == role:
+                valido = True
+                break
+        if not valido:
+            self._send_json({"ok": False, "error": "rbac_user_invalid"}, status=HTTPStatus.FORBIDDEN)
+            return False
+
+        # Matriz simples de permissões por endpoint.
+        if path.startswith("/admin") and not _papel_permitido(role, ("admin",)):
+            self._send_json({"ok": False, "error": "rbac_forbidden_admin"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        if path.startswith("/security") and not _papel_permitido(role, ("admin", "security")):
+            self._send_json({"ok": False, "error": "rbac_forbidden_security"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        if path.startswith("/autonomy/config") and not _papel_permitido(role, ("admin",)):
+            self._send_json({"ok": False, "error": "rbac_forbidden_autonomy"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        if path.startswith("/autonomy/task") and not _papel_permitido(role, ("admin", "operator")):
+            self._send_json({"ok": False, "error": "rbac_forbidden_task"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        if path.startswith("/approvals") and not _papel_permitido(role, ("admin", "security")):
+            self._send_json({"ok": False, "error": "rbac_forbidden_approval"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        if path.startswith("/documents/analyze") and not _papel_permitido(role, ("admin", "operator", "analyst")):
+            self._send_json({"ok": False, "error": "rbac_forbidden_documents"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        return True
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -806,6 +980,8 @@ class NovaHandler(BaseHTTPRequestHandler):
             return
         if not self._auth_ok(path):
             return
+        if not self._rbac_ok(path, "GET"):
+            return
 
         if path == "/":
             self._send_json(
@@ -813,12 +989,30 @@ class NovaHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "status": "online",
                     "service": "nova-api",
-                    "endpoints": ["/health", "/chat", "/market/quotes", "/weather/now"],
+                    "endpoints": [
+                        "/health",
+                        "/chat",
+                        "/market/quotes",
+                        "/weather/now",
+                        "/system/status",
+                        "/autonomy/status",
+                        "/ops/status",
+                    ],
                 }
             )
             return
         if path == "/health":
             self._send_json({"ok": True, "service": "nova-api"})
+            return
+        if path == "/ops/status":
+            self._send_json(status_operacional())
+            return
+        if path == "/approvals":
+            status = (query.get("status", [""])[0] or "").strip()
+            self._send_json({"ok": True, "items": listar_aprovacoes(status=status)})
+            return
+        if path == "/system/status":
+            self._send_json(status_sistema_detalhado())
             return
         if path == "/backup/export":
             self._send_json(
@@ -859,6 +1053,16 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/insights/alerts":
             self._send_json({"ok": True, "alerts": gerar_alertas_recomendacoes()})
             return
+        if path == "/memory/subjects":
+            try:
+                limit = int((query.get("limit", ["8"])[0] or "8").strip())
+            except Exception:
+                limit = 8
+            self._send_json(perfil_assuntos(limit=limit))
+            return
+        if path == "/help/topics":
+            self._send_json(ajuda_topicos())
+            return
         if path == "/observability/traces":
             try:
                 limit = int((query.get("limit", ["120"])[0] or "120").strip())
@@ -886,6 +1090,16 @@ class NovaHandler(BaseHTTPRequestHandler):
             except Exception:
                 limit = 30
             self._send_json({"ok": True, "items": obter_historico_auditoria(limit=limit)})
+            return
+        if path == "/security/session-audit":
+            try:
+                limit = int((query.get("limit", ["120"])[0] or "120").strip())
+            except Exception:
+                limit = 120
+            self._send_json({"ok": True, "items": listar_auditoria_sessao(limit=limit)})
+            return
+        if path == "/security/session-audit/verify":
+            self._send_json(validar_cadeia_auditoria())
             return
         if path == "/assistant/briefing":
             cidade = (query.get("city", [""])[0] or "").strip()
@@ -935,6 +1149,12 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/rag/feedback/stats":
             self._send_json(estatisticas_feedback_rag())
             return
+        if path == "/autonomy/status":
+            self._send_json(status_autonomia())
+            return
+        if path == "/autonomy/config":
+            self._send_json({"ok": True, "config": ler_config_autonomia()})
+            return
 
         self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
@@ -944,6 +1164,8 @@ class NovaHandler(BaseHTTPRequestHandler):
         if not self._rate_limit_ok(path):
             return
         if not self._auth_ok(path):
+            return
+        if not self._rbac_ok(path, "POST"):
             return
         body = _json_body(self)
         if body is None:
@@ -1011,6 +1233,70 @@ class NovaHandler(BaseHTTPRequestHandler):
             except Exception:
                 score = 1
             out = registrar_feedback_rag(pergunta, chunk_id, score=score)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
+            return
+        if path == "/autonomy/config":
+            ativa = _bool_ou_none(body.get("active"))
+            confirmar = _bool_ou_none(body.get("confirm_sensitive"))
+            nivel = body.get("risk_level")
+            liberdade = body.get("freedom_level")
+            out = atualizar_autonomia(
+                ativa=ativa,
+                nivel_risco=str(nivel).strip().lower() if nivel is not None else None,
+                liberdade=str(liberdade).strip().lower() if liberdade is not None else None,
+                confirmar_sensivel=confirmar,
+            )
+            self._send_json({"ok": True, "config": out})
+            return
+        if path == "/autonomy/task":
+            objetivo = str(body.get("objective", "")).strip()
+            origem = str(body.get("source", "api")).strip() or "api"
+            out = solicitar_execucao_autonoma(objetivo, origem=origem)
+            if out.get("error") == "confirmation_required":
+                risk = out.get("risk", {}) if isinstance(out.get("risk"), dict) else {}
+                risk_level = str(risk.get("nivel", "alto"))
+                required = 2 if risk_level == "alto" else 1
+                req = criar_aprovacao_sensivel(
+                    objective=objetivo,
+                    requested_by=str(self.headers.get("X-User-Name", "") or "api"),
+                    reason=f"tarefa autônoma sensível (risco {risk_level})",
+                    required_approvals=required,
+                )
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": "approval_required",
+                        "message": out.get("message", "Aprovação obrigatória."),
+                        "approval_request": req.get("request"),
+                    },
+                    status=HTTPStatus.ACCEPTED,
+                )
+                return
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
+            return
+        if path == "/approvals/decide":
+            req_id = str(body.get("request_id", "")).strip()
+            approve = bool(body.get("approve", False))
+            approver = str(body.get("approver", "")).strip() or str(
+                self.headers.get("X-User-Name", "")
+            ).strip()
+            note = str(body.get("note", "")).strip()
+            out = decidir_aprovacao(req_id, approve=approve, approver=approver, note=note)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
+            return
+        if path == "/documents/analyze":
+            filename = str(body.get("filename", "")).strip()
+            content_b64 = str(body.get("content_base64", "")).strip()
+            cfg = carregar_config_painel()
+            auto_learn_raw = body.get("auto_learn")
+            if auto_learn_raw is None:
+                auto_learn = bool(cfg.get("auto_document_learning", True))
+            else:
+                auto_learn = bool(auto_learn_raw)
+            out = analisar_documento_base64(filename, content_b64, auto_learn=auto_learn)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json(out, status=status)
             return
@@ -1126,6 +1412,20 @@ class NovaHandler(BaseHTTPRequestHandler):
                 campos["push_to_talk_only"] = _bool_ou_none(body.get("push_to_talk_only"))
             if "allow_voice_on_lock" in body:
                 campos["allow_voice_on_lock"] = _bool_ou_none(body.get("allow_voice_on_lock"))
+            if "autonomia_ativa" in body:
+                campos["autonomia_ativa"] = _bool_ou_none(body.get("autonomia_ativa"))
+            if "autonomia_nivel_risco" in body:
+                campos["autonomia_nivel_risco"] = body.get("autonomia_nivel_risco")
+            if "autonomia_liberdade" in body:
+                campos["autonomia_liberdade"] = body.get("autonomia_liberdade")
+            if "autonomia_requer_confirmacao_sensivel" in body:
+                campos["autonomia_requer_confirmacao_sensivel"] = _bool_ou_none(
+                    body.get("autonomia_requer_confirmacao_sensivel")
+                )
+            if "rbac_ativo" in body:
+                campos["rbac_ativo"] = _bool_ou_none(body.get("rbac_ativo"))
+            if "auto_document_learning" in body:
+                campos["auto_document_learning"] = _bool_ou_none(body.get("auto_document_learning"))
             if "admin_guard" in body:
                 campos["admin_guard"] = _bool_ou_none(body.get("admin_guard"))
             if "telegram_ativo" in body:
@@ -1248,6 +1548,8 @@ class NovaHandler(BaseHTTPRequestHandler):
             return
         if not self._auth_ok(path):
             return
+        if not self._rbac_ok(path, "PUT"):
+            return
         body = _json_body(self)
         if body is None:
             self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
@@ -1290,6 +1592,8 @@ class NovaHandler(BaseHTTPRequestHandler):
         if not self._rate_limit_ok(path):
             return
         if not self._auth_ok(path):
+            return
+        if not self._rbac_ok(path, "DELETE"):
             return
 
         if path.startswith("/knowledge/"):
