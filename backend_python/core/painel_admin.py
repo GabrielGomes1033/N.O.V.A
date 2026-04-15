@@ -128,19 +128,30 @@ def _config_padrao() -> dict:
         "continuous_wake": False,
         "push_to_talk_only": True,
         "allow_voice_on_lock": True,
-        "autonomia_ativa": False,
-        "autonomia_nivel_risco": "moderado",
-        "autonomia_liberdade": "media",
-        "autonomia_requer_confirmacao_sensivel": True,
+        "autonomia_ativa": True,
+        "autonomia_nivel_risco": "alto",
+        "autonomia_liberdade": "alta",
+        "autonomia_requer_confirmacao_sensivel": False,
         "auto_document_learning": True,
         "rbac_ativo": False,
-        "admin_guard": True,
+        "admin_guard": False,
         "telegram_ativo": False,
         "telegram_token": os.getenv("NOVA_TELEGRAM_TOKEN", ""),
         "telegram_chat_id": os.getenv("NOVA_TELEGRAM_CHAT_ID", ""),
         "log_consciencia": [],
         "atualizado_em": _agora(),
     }
+
+
+def _aplicar_autonomia_total(config: dict) -> dict:
+    # Projeto pessoal em modo full-autonomia: sem confirmação manual.
+    config["autonomia_ativa"] = True
+    config["autonomia_nivel_risco"] = "alto"
+    config["autonomia_liberdade"] = "alta"
+    config["autonomia_requer_confirmacao_sensivel"] = False
+    config["auto_document_learning"] = True
+    config["admin_guard"] = False
+    return config
 
 
 def carregar_config_painel() -> dict:
@@ -155,6 +166,7 @@ def carregar_config_painel() -> dict:
 
     config = _config_padrao()
     config.update(dados)
+    config = _aplicar_autonomia_total(config)
     if not isinstance(config.get("log_consciencia"), list):
         config["log_consciencia"] = []
     salvar_json_seguro(ARQUIVO_CONFIG, config)
@@ -216,6 +228,7 @@ def atualizar_config_painel(**campos) -> dict:
     if "log_consciencia" in campos and isinstance(campos.get("log_consciencia"), list):
         config["log_consciencia"] = campos.get("log_consciencia")[:100]
 
+    config = _aplicar_autonomia_total(config)
     config["atualizado_em"] = _agora()
     salvar_json_seguro(ARQUIVO_CONFIG, config)
     return config

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 import ast
 import math
+import os
 import re
-from urllib.parse import quote_plus
+import unicodedata
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse, urlsplit
+import xml.etree.ElementTree as ET
 
 import requests
 
@@ -77,13 +81,483 @@ def resumo_adaptacao_usuario() -> str:
     return "Estou me adaptando ao seu estilo. Seus tópicos favoritos recentes: " + ", ".join(favoritos[:5]) + "."
 
 
+def _strip_tags(texto_html: str) -> str:
+    return _limpar(unescape(re.sub(r"<[^>]+>", " ", texto_html or "")))
+
+
+def _tokens(texto: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9à-ÿ]+", (texto or "").lower()) if t}
+
+
+def _dedupe_ordem(itens: list[str]) -> list[str]:
+    vistos = set()
+    saida: list[str] = []
+    for item in itens:
+        v = (item or "").strip()
+        if not v or v in vistos:
+            continue
+        vistos.add(v)
+        saida.append(v)
+    return saida
+
+
+def _resumir_texto(texto: str, limite: int = 220) -> str:
+    t = _limpar(texto)
+    if len(t) <= limite:
+        return t
+    recorte = t[: max(40, limite)].rsplit(" ", 1)[0].strip()
+    return (recorte or t[:limite]).rstrip(" ,.;:-") + "..."
+
+
+def _normalizar_ascii(texto: str) -> str:
+    t = unicodedata.normalize("NFKD", texto or "")
+    return t.encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _termos_relevantes_consulta(consulta: str) -> set[str]:
+    stopwords = {
+        "de",
+        "do",
+        "da",
+        "dos",
+        "das",
+        "e",
+        "a",
+        "o",
+        "as",
+        "os",
+        "um",
+        "uma",
+        "para",
+        "por",
+        "com",
+        "sem",
+        "sobre",
+        "que",
+        "como",
+        "hoje",
+        "agora",
+        "qual",
+        "quais",
+        "me",
+        "na",
+        "no",
+        "nas",
+        "nos",
+    }
+    return {t for t in _tokens(consulta) if len(t) >= 3 and t not in stopwords}
+
+
+def _pontuar_resultado_web(item: dict, termos: set[str]) -> int:
+    if not isinstance(item, dict):
+        return -1
+    titulo = _limpar(str(item.get("title", ""))).lower()
+    snippet = _limpar(str(item.get("snippet", ""))).lower()
+    domain = _limpar(str(item.get("domain", ""))).lower()
+    if not titulo and not snippet:
+        return -1
+
+    texto = f"{titulo} {snippet} {domain}".strip()
+    if not texto:
+        return -1
+
+    score = 0
+    houve_match = False
+    titulo_n = _normalizar_ascii(titulo)
+    snippet_n = _normalizar_ascii(snippet)
+    domain_n = _normalizar_ascii(domain)
+    termos_n = {_normalizar_ascii(t) for t in termos}
+    if termos:
+        for termo in termos_n:
+            if termo in titulo_n:
+                score += 4
+                houve_match = True
+            elif termo in snippet_n:
+                score += 2
+                houve_match = True
+            elif termo in domain_n:
+                score += 1
+                houve_match = True
+        if not houve_match:
+            return 0
+    else:
+        score += 1
+
+    # Evita snippets longos/poluídos ganharem prioridade.
+    tam_snippet = len(snippet)
+    if 35 <= tam_snippet <= 220:
+        score += 2
+    elif tam_snippet > 320:
+        score -= 1
+
+    return score
+
+
+def _organizar_resultados_web(resultados: list[dict], consulta: str) -> list[dict]:
+    if not isinstance(resultados, list) or not resultados:
+        return []
+    termos = _termos_relevantes_consulta(consulta)
+    enriquecidos: list[tuple[int, int, dict]] = []
+    for idx, item in enumerate(resultados):
+        score = _pontuar_resultado_web(item, termos)
+        if score < 0:
+            continue
+        if termos and score == 0:
+            continue
+        enriquecidos.append((score, idx, item))
+
+    if not enriquecidos:
+        return resultados[:4] if not termos else []
+
+    enriquecidos.sort(key=lambda x: (x[0], -x[1]), reverse=True)
+
+    # Evita repetição excessiva do mesmo domínio no topo.
+    saida: list[dict] = []
+    dom_count: dict[str, int] = {}
+    for _, _, item in enriquecidos:
+        domain = _limpar(str(item.get("domain", ""))).lower()
+        if domain:
+            vezes = dom_count.get(domain, 0)
+            if vezes >= 2:
+                continue
+            dom_count[domain] = vezes + 1
+        saida.append(item)
+        if len(saida) >= 6:
+            break
+
+    return saida or resultados[:4]
+
+
+def _consulta_base(consulta: str) -> str:
+    c = (consulta or "").strip()
+    c = re.sub(
+        r"^(biografia de|quem e|quem é|sobre|cotacao de|cotação de|cotacao|cotação|preco de|preço de|valor de)\s+",
+        "",
+        c,
+        flags=re.IGNORECASE,
+    )
+    c = re.sub(r"\b(hoje|agora)$", "", c, flags=re.IGNORECASE).strip(" ,.-")
+    return c or (consulta or "").strip()
+
+
+def _normalizar_url_resultado(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    try:
+        parsed = urlsplit(raw)
+        if "duckduckgo.com" in (parsed.netloc or "") and parsed.path.startswith("/l/"):
+            q = parse_qs(parsed.query or "")
+            destino = (q.get("uddg") or [""])[0]
+            if destino:
+                return unquote(destino)
+    except Exception:
+        pass
+    return raw
+
+
+def _buscar_bing_web(consulta: str, limit: int = 5) -> list[dict]:
+    try:
+        url = f"https://www.bing.com/search?format=rss&q={quote_plus(consulta)}"
+        r = requests.get(
+            url,
+            timeout=TIMEOUT_PADRAO,
+            headers={"User-Agent": "NOVA-Assistente/1.0"},
+        )
+        r.raise_for_status()
+        root = ET.fromstring(r.text)
+    except Exception:
+        return []
+
+    itens: list[dict] = []
+    vistos = set()
+    for item in root.findall("./channel/item"):
+        title = _limpar((item.findtext("title") or ""))
+        link = _normalizar_url_resultado(item.findtext("link") or "")
+        desc = _strip_tags(item.findtext("description") or "")
+        if not link or link in vistos:
+            continue
+        vistos.add(link)
+        dominio = urlparse(link).netloc.lower().replace("www.", "")
+        itens.append(
+            {
+                "title": title,
+                "snippet": desc,
+                "url": link,
+                "domain": dominio,
+            }
+        )
+        if len(itens) >= max(1, limit):
+            break
+    return itens
+
+
+def _buscar_brave_web(consulta: str, limit: int = 5) -> list[dict]:
+    api_key = (
+        os.getenv("NOVA_BRAVE_API_KEY")
+        or os.getenv("BRAVE_SEARCH_API_KEY")
+        or os.getenv("BRAVE_API_KEY")
+        or ""
+    ).strip()
+    if not api_key:
+        return []
+    try:
+        r = requests.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={
+                "q": consulta,
+                "count": max(1, min(int(limit), 20)),
+                "search_lang": "pt",
+                "country": "br",
+            },
+            headers={
+                "X-Subscription-Token": api_key,
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+                "User-Agent": "NOVA-Assistente/1.0",
+            },
+            timeout=TIMEOUT_PADRAO,
+        )
+        r.raise_for_status()
+        data = r.json() if r.text else {}
+    except Exception:
+        return []
+
+    results = (
+        data.get("web", {}).get("results", [])
+        if isinstance(data, dict)
+        else []
+    )
+    if not isinstance(results, list):
+        return []
+
+    itens: list[dict] = []
+    vistos = set()
+    for item in results[: max(1, limit * 2)]:
+        if not isinstance(item, dict):
+            continue
+        url = _normalizar_url_resultado(str(item.get("url", "")).strip())
+        if not url or url in vistos:
+            continue
+        vistos.add(url)
+        title = _limpar(str(item.get("title", "")))
+        snippet_raw = str(item.get("description", "") or "")
+        if not snippet_raw:
+            extras = item.get("extra_snippets", [])
+            if isinstance(extras, list) and extras:
+                snippet_raw = str(extras[0] or "")
+        snippet = _limpar(snippet_raw)
+        dominio = urlparse(url).netloc.lower().replace("www.", "")
+        itens.append(
+            {
+                "title": title,
+                "snippet": snippet,
+                "url": url,
+                "domain": dominio,
+            }
+        )
+        if len(itens) >= limit:
+            break
+    return itens
+
+
+def _buscar_serpapi_web(consulta: str, limit: int = 5) -> list[dict]:
+    api_key = (
+        os.getenv("NOVA_SERPAPI_KEY")
+        or os.getenv("SERPAPI_API_KEY")
+        or os.getenv("SERPAPI_KEY")
+        or ""
+    ).strip()
+    if not api_key:
+        return []
+    try:
+        r = requests.get(
+            "https://serpapi.com/search.json",
+            params={
+                "engine": "google",
+                "q": consulta,
+                "api_key": api_key,
+                "hl": "pt-br",
+                "gl": "br",
+                "num": max(1, min(int(limit), 10)),
+            },
+            timeout=TIMEOUT_PADRAO,
+            headers={"User-Agent": "NOVA-Assistente/1.0"},
+        )
+        r.raise_for_status()
+        data = r.json() if r.text else {}
+    except Exception:
+        return []
+
+    results = data.get("organic_results", []) if isinstance(data, dict) else []
+    if not isinstance(results, list):
+        return []
+
+    itens: list[dict] = []
+    vistos = set()
+    for item in results[: max(1, limit * 2)]:
+        if not isinstance(item, dict):
+            continue
+        url = _normalizar_url_resultado(str(item.get("link", "")).strip())
+        if not url or url in vistos:
+            continue
+        vistos.add(url)
+        title = _limpar(str(item.get("title", "")))
+        snippet = _limpar(str(item.get("snippet", "")))
+        dominio = urlparse(url).netloc.lower().replace("www.", "")
+        itens.append(
+            {
+                "title": title,
+                "snippet": snippet,
+                "url": url,
+                "domain": dominio,
+            }
+        )
+        if len(itens) >= limit:
+            break
+    return itens
+
+
+def _buscar_duckduckgo_web(consulta: str, limit: int = 5) -> list[dict]:
+    try:
+        url = f"https://html.duckduckgo.com/html/?q={quote_plus(consulta)}"
+        r = requests.get(
+            url,
+            timeout=TIMEOUT_PADRAO,
+            headers={"User-Agent": "NOVA-Assistente/1.0"},
+        )
+        r.raise_for_status()
+        html = r.text or ""
+    except Exception:
+        return []
+
+    titulos = re.findall(
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    snippets = re.findall(
+        r'class="result__snippet"[^>]*>(.*?)</a>',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    itens: list[dict] = []
+    vistos = set()
+    for idx, (href, titulo_html) in enumerate(titulos[: max(1, limit * 2)]):
+        destino = _normalizar_url_resultado(href)
+        if not destino or destino in vistos:
+            continue
+        vistos.add(destino)
+        titulo = _strip_tags(titulo_html)
+        snippet = _strip_tags(snippets[idx] if idx < len(snippets) else "")
+        dominio = urlparse(destino).netloc.lower().replace("www.", "")
+        itens.append(
+            {
+                "title": titulo,
+                "snippet": snippet,
+                "url": destino,
+                "domain": dominio,
+            }
+        )
+        if len(itens) >= limit:
+            break
+    return itens
+
+
+def _buscar_itunes_musica(consulta: str, limit: int = 3) -> list[str]:
+    try:
+        r = requests.get(
+            "https://itunes.apple.com/search",
+            params={"term": consulta, "entity": "song", "limit": max(1, limit)},
+            timeout=TIMEOUT_PADRAO,
+        )
+        r.raise_for_status()
+        data = r.json()
+        results = data.get("results", []) if isinstance(data, dict) else []
+        linhas = []
+        for item in results[:limit]:
+            track = _limpar(str(item.get("trackName", "")))
+            artist = _limpar(str(item.get("artistName", "")))
+            album = _limpar(str(item.get("collectionName", "")))
+            if track and artist:
+                linhas.append(f"{track} - {artist}" + (f" ({album})" if album else ""))
+        return linhas
+    except Exception:
+        return []
+
+
+def _buscar_financas_web(consulta: str) -> list[str]:
+    try:
+        r = requests.get(
+            "https://query2.finance.yahoo.com/v1/finance/search",
+            params={"q": consulta, "quotesCount": 5, "newsCount": 3},
+            timeout=TIMEOUT_PADRAO,
+            headers={"User-Agent": "NOVA-Assistente/1.0"},
+        )
+        r.raise_for_status()
+        data = r.json() if r.text else {}
+        linhas = []
+        for q in (data.get("quotes", []) or [])[:4]:
+            symbol = _limpar(str(q.get("symbol", "")))
+            nome = _limpar(str(q.get("shortname") or q.get("longname") or ""))
+            exch = _limpar(str(q.get("exchDisp", "")))
+            if symbol and nome:
+                linhas.append(f"{symbol}: {nome}" + (f" [{exch}]" if exch else ""))
+        for n in (data.get("news", []) or [])[:2]:
+            t = _limpar(str(n.get("title", "")))
+            p = _limpar(str(n.get("publisher", "")))
+            if t:
+                linhas.append(t + (f" ({p})" if p else ""))
+        return linhas[:6]
+    except Exception:
+        return []
+
+
+def _buscar_github_programacao(consulta: str, limit: int = 3) -> list[str]:
+    try:
+        r = requests.get(
+            "https://api.github.com/search/repositories",
+            params={"q": consulta, "sort": "stars", "order": "desc", "per_page": max(1, limit)},
+            timeout=TIMEOUT_PADRAO,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        r.raise_for_status()
+        data = r.json() if r.text else {}
+        items = data.get("items", []) if isinstance(data, dict) else []
+        linhas = []
+        for item in items[:limit]:
+            full_name = _limpar(str(item.get("full_name", "")))
+            stars = int(item.get("stargazers_count", 0) or 0)
+            desc = _limpar(str(item.get("description", "")))
+            if full_name:
+                linha = f"{full_name} ★{stars}"
+                if desc:
+                    linha += f" - {desc[:120]}"
+                linhas.append(linha)
+        return linhas
+    except Exception:
+        return []
+
+
 def pesquisar_na_internet(consulta: str) -> dict:
     consulta = _limpar(consulta)
     if not consulta:
-        return {"ok": False, "resumo": "Consulta vazia."}
+        return {"ok": False, "resumo": "Consulta vazia.", "fontes": [], "links": []}
 
-    blocos: list[str] = []
+    consulta_base = _consulta_base(consulta)
+    tk = _tokens(consulta_base)
+    termos_consulta = _termos_relevantes_consulta(consulta_base)
+    secoes: list[str] = []
+    resumo_rapido = ""
+    destaques_web: list[str] = []
+    secao_programacao: list[str] = []
+    secao_musica: list[str] = []
+    secao_financas: list[str] = []
     fontes: list[str] = []
+    links: list[str] = []
 
     # 1) DuckDuckGo instant answer
     try:
@@ -95,8 +569,11 @@ def pesquisar_na_internet(consulta: str) -> dict:
         heading = _limpar(str(data.get("Heading", "")))
         if abstract:
             prefixo = f"{heading}: " if heading else ""
-            blocos.append(prefixo + abstract)
-            fontes.append("DuckDuckGo")
+            candidato = _resumir_texto(prefixo + abstract, limite=280)
+            score = _pontuar_resultado_web({"title": heading, "snippet": abstract, "domain": ""}, termos_consulta)
+            if score > 0 or not termos_consulta:
+                resumo_rapido = candidato
+                fontes.append("DuckDuckGo")
         else:
             relacionados = data.get("RelatedTopics", [])
             itens = []
@@ -111,27 +588,101 @@ def pesquisar_na_internet(consulta: str) -> dict:
                     if len(itens) >= 4:
                         break
             if itens:
-                blocos.append("; ".join(itens))
-                fontes.append("DuckDuckGo")
+                candidato = _resumir_texto("; ".join(itens[:3]), limite=260)
+                score = _pontuar_resultado_web({"title": "", "snippet": candidato, "domain": ""}, termos_consulta)
+                if score > 0 or not termos_consulta:
+                    resumo_rapido = candidato
+                    fontes.append("DuckDuckGo")
     except Exception:
         pass
 
-    # 2) Wikipedia
+    # 2) Busca web geral (não limitada a Wikipedia), com provider premium opcional.
+    provider_busca = ""
+    web_results = _buscar_brave_web(consulta_base, limit=6)
+    if web_results:
+        provider_busca = "BraveSearchAPI"
+    if not web_results:
+        web_results = _buscar_serpapi_web(consulta_base, limit=6)
+        if web_results:
+            provider_busca = "SerpAPI"
+    if not web_results:
+        web_results = _buscar_bing_web(consulta_base, limit=5)
+        if web_results:
+            provider_busca = "Bing"
+    if not web_results:
+        web_results = _buscar_duckduckgo_web(consulta_base, limit=5)
+        if web_results:
+            provider_busca = "DuckDuckGoHTML"
+    if web_results:
+        if provider_busca:
+            fontes.append(provider_busca)
+        web_results_ordenados = _organizar_resultados_web(web_results, consulta_base)
+        for item in web_results_ordenados[:3]:
+            titulo = _resumir_texto(str(item.get("title", "")), limite=95)
+            snippet = _resumir_texto(str(item.get("snippet", "")), limite=125)
+            dominio = _limpar(str(item.get("domain", "")))
+            url_item = _limpar(str(item.get("url", "")))
+            if url_item:
+                links.append(url_item)
+            if dominio:
+                fontes.append(dominio)
+
+            if titulo and snippet:
+                linha = f"{titulo} ({dominio}) — {snippet}" if dominio else f"{titulo} — {snippet}"
+            elif titulo:
+                linha = f"{titulo} ({dominio})" if dominio else titulo
+            else:
+                linha = f"{snippet} ({dominio})" if dominio else snippet
+            linha = _limpar(linha)
+            if linha:
+                destaques_web.append(linha)
+
+    # 3) Wikipedia (continua como fonte extra, com consulta simplificada)
     try:
-        wiki = gerar_pesquisa_wikipedia(consulta)
+        wiki = gerar_pesquisa_wikipedia(consulta_base)
         if wiki:
-            blocos.append(f"{wiki.get('titulo')}: {wiki.get('resumo')}")
-            fontes.append(wiki.get("fonte", "Wikipedia"))
+            titulo_wiki = _resumir_texto(str(wiki.get("titulo", "")), limite=80)
+            resumo_wiki = _resumir_texto(str(wiki.get("resumo", "")), limite=200)
+            trecho = _limpar(f"{titulo_wiki}: {resumo_wiki}") if titulo_wiki else resumo_wiki
+            score_wiki = _pontuar_resultado_web(
+                {"title": titulo_wiki, "snippet": resumo_wiki, "domain": "wikipedia.org"},
+                termos_consulta,
+            )
+            if trecho and (score_wiki > 0 or not termos_consulta):
+                if not resumo_rapido:
+                    resumo_rapido = trecho
+                elif len(destaques_web) < 4:
+                    destaques_web.append(f"Wikipedia — {trecho}")
+                fontes.append(wiki.get("fonte", "Wikipedia"))
+                if wiki.get("url"):
+                    links.append(str(wiki.get("url")))
     except Exception:
         pass
 
-    # 3) StackOverflow quando assunto técnico
-    consulta_l = consulta.lower()
-    if any(t in consulta_l for t in ["api", "python", "java", "javascript", "flutter", "agente", "ia", "llm", "erro", "bug"]):
+    # 4) StackOverflow + GitHub quando assunto técnico
+    tech_tokens = {
+        "api",
+        "python",
+        "java",
+        "javascript",
+        "flutter",
+        "agente",
+        "ia",
+        "llm",
+        "erro",
+        "bug",
+        "codigo",
+        "código",
+        "programacao",
+        "programação",
+        "backend",
+        "frontend",
+    }
+    if any(t in tk for t in tech_tokens):
         try:
             so_url = (
                 "https://api.stackexchange.com/2.3/search/advanced"
-                f"?order=desc&sort=relevance&site=stackoverflow&accepted=True&answers=1&title={quote_plus(consulta)}"
+                f"?order=desc&sort=relevance&site=stackoverflow&accepted=True&answers=1&title={quote_plus(consulta_base)}"
             )
             r = requests.get(so_url, timeout=TIMEOUT_PADRAO)
             r.raise_for_status()
@@ -143,28 +694,111 @@ def pesquisar_na_internet(consulta: str) -> dict:
                 if title:
                     titulos.append(title)
             if titulos:
-                blocos.append("No Stack Overflow, os tópicos mais próximos foram: " + "; ".join(titulos))
+                for t in titulos[:2]:
+                    secao_programacao.append("Stack Overflow: " + _resumir_texto(t, limite=110))
                 fontes.append("StackOverflow")
         except Exception:
             pass
+        gh = _buscar_github_programacao(consulta_base, limit=3)
+        if gh:
+            for item in gh[:2]:
+                secao_programacao.append("GitHub: " + _resumir_texto(item, limite=125))
+            fontes.append("GitHub")
 
-    if not blocos:
+    # 5) Música
+    music_tokens = {"musica", "música", "musicas", "músicas", "cantor", "banda", "album", "álbum", "playlist"}
+    if any(t in tk for t in music_tokens):
+        tracks = _buscar_itunes_musica(consulta_base, limit=4)
+        if tracks:
+            secao_musica = [_resumir_texto(t, limite=110) for t in tracks[:4]]
+            fontes.append("iTunes")
+
+    # 6) Finanças
+    finance_tokens = {"acao", "ações", "bolsa", "dolar", "dólar", "euro", "bitcoin", "ethereum", "cripto", "financa", "finanças", "mercado", "cotacao", "cotação"}
+    if any(t in tk for t in finance_tokens):
+        cot = cotacoes_financeiras()
+        if cot.get("ok"):
+            partes = []
+            if cot.get("dolar_brl") is not None:
+                partes.append(f"Dólar R$ {cot['dolar_brl']:.4f}")
+            if cot.get("euro_brl") is not None:
+                partes.append(f"Euro R$ {cot['euro_brl']:.4f}")
+            if cot.get("bitcoin_usd") is not None:
+                partes.append(f"Bitcoin US$ {cot['bitcoin_usd']:.2f}")
+            if cot.get("ethereum_usd") is not None:
+                partes.append(f"Ethereum US$ {cot['ethereum_usd']:.2f}")
+            if partes:
+                secao_financas.append("Cotações: " + " | ".join(partes))
+            for src in cot.get("source", []) or []:
+                fontes.append(str(src))
+        mercados = _buscar_financas_web(consulta_base)
+        if mercados:
+            for item in mercados[:3]:
+                secao_financas.append(_resumir_texto(item, limite=120))
+            fontes.append("YahooFinance")
+
+    if resumo_rapido:
+        secoes.append("Resumo rápido:\n" + resumo_rapido)
+
+    if destaques_web:
+        linhas = [f"{i}. {txt}" for i, txt in enumerate(destaques_web[:4], start=1)]
+        secoes.append("Resultados principais:\n" + "\n".join(linhas))
+
+    if secao_programacao:
+        secoes.append("Programação:\n" + "\n".join(f"- {x}" for x in secao_programacao[:4]))
+
+    if secao_musica:
+        secoes.append("Música:\n" + "\n".join(f"- {x}" for x in secao_musica[:4]))
+
+    if secao_financas:
+        secoes.append("Finanças:\n" + "\n".join(f"- {x}" for x in secao_financas[:4]))
+
+    if not secoes:
         return {
             "ok": False,
             "resumo": "Não consegui coletar fontes agora. Se quiser, me ensine essa resposta com /ensinar pergunta = resposta.",
             "fontes": [],
+            "links": [],
         }
 
-    resumo = " ".join(blocos)
-    resumo = re.sub(r"\s+", " ", resumo).strip()
-    if len(resumo) > 1200:
-        resumo = resumo[:1200].rsplit(" ", 1)[0] + "..."
+    resumo = "\n\n".join(s for s in secoes if s.strip()).strip()
+    if len(resumo) > 1400:
+        resumo = resumo[:1400].rsplit(" ", 1)[0].rstrip(" ,.;:-") + "..."
+
+    fontes = _dedupe_ordem(fontes)
+    links = _dedupe_ordem(links)
 
     return {
         "ok": True,
         "resumo": resumo,
-        "fontes": sorted(set(f for f in fontes if f)),
+        "fontes": fontes[:12],
+        "links": links[:8],
     }
+
+
+def formatar_resposta_pesquisa(resultado: dict, max_fontes: int = 6, max_links: int = 3) -> str:
+    if not isinstance(resultado, dict):
+        return "Não consegui organizar a resposta da pesquisa agora."
+
+    resumo = str(resultado.get("resumo", "")).strip()
+    if not resumo:
+        return "Não consegui encontrar um resumo agora."
+
+    partes = [resumo]
+
+    fontes_raw = resultado.get("fontes", [])
+    fontes = _dedupe_ordem([str(x) for x in fontes_raw if str(x).strip()])[: max(1, max_fontes)]
+    if fontes:
+        partes.append("Fontes:\n" + "\n".join(f"- {f}" for f in fontes))
+
+    links_raw = resultado.get("links", [])
+    links = _dedupe_ordem([str(x) for x in links_raw if str(x).strip()])[: max(1, max_links)]
+    if links:
+        partes.append("Links úteis:\n" + "\n".join(f"{i}. {u}" for i, u in enumerate(links, start=1)))
+
+    texto = "\n\n".join(p for p in partes if p.strip())
+    texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
+    return texto
 
 
 def cotacoes_financeiras() -> dict:

@@ -9,6 +9,7 @@ from core.assistente_plus import (
     consultar_clima,
     cotacoes_financeiras,
     formatar_cotacoes_humanas,
+    formatar_resposta_pesquisa,
     listar_lembretes,
     pesquisar_na_internet,
 )
@@ -423,12 +424,12 @@ def orquestrar_consulta(mensagem: str) -> dict | None:
     if l.startswith("/calcular") or l.startswith("calcule") or l.startswith("quanto e") or l.startswith("quanto é"):
         expr = re.sub(r"^(\/calcular|calcule|quanto e|quanto é)", "", msg, flags=re.IGNORECASE).strip(" =:")
         calc = calcular_expressao(expr)
-        if calc.get("ok"):
-            return {"resposta": f"Resultado: {calc.get('resultado')}"}
-        web = pesquisar_na_internet(f"como resolver: {expr}")
-        if web.get("ok"):
-            return {"resposta": "Fiquei em dúvida no cálculo, então consultei a web para validar:\n" + web.get("resumo", "")}
-        return {"resposta": "Tive dúvida nesse cálculo. Pode me ensinar esse padrão com /ensinar pergunta = resposta."}
+    if calc.get("ok"):
+        return {"resposta": f"Resultado: {calc.get('resultado')}"}
+    web = pesquisar_na_internet(f"como resolver: {expr}")
+    if web.get("ok"):
+        return {"resposta": "Fiquei em dúvida no cálculo, então consultei a web para validar:\n" + formatar_resposta_pesquisa(web)}
+    return {"resposta": "Tive dúvida nesse cálculo. Pode me ensinar esse padrão com /ensinar pergunta = resposta."}
 
     # Mercado
     if any(k in l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado"]):
@@ -468,9 +469,7 @@ def orquestrar_consulta(mensagem: str) -> dict | None:
         if len(consulta) >= 3:
             pesquisa = pesquisar_na_internet(consulta)
             if pesquisa.get("ok"):
-                fontes = pesquisa.get("fontes", [])
-                fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
-                return {"resposta": pesquisa.get("resumo", "") + fontes_txt}
+                return {"resposta": formatar_resposta_pesquisa(pesquisa)}
             return {"resposta": "Não achei fontes confiáveis agora. Se quiser, me ensine essa resposta para eu aprender."}
 
     return None

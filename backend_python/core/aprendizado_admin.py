@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import json
 import random
 import re
 import unicodedata
 import uuid
 
 from core.caminhos import pasta_dados_app
+from core.knowledge_repository import KnowledgeRepository
 from core.seguranca import carregar_json_seguro, salvar_json_seguro
 
 
 ARQUIVO_APRENDIZADO = pasta_dados_app() / "aprendizado.json"
 ARQUIVO_APRENDIZADO_LEGADO = Path(__file__).with_name("aprendizado.json")
+
+_REPO = KnowledgeRepository()
+_MIGRACAO_LEGADO_CONCLUIDA = False
 
 
 def normalizar_texto(texto: str) -> str:
@@ -81,18 +84,7 @@ def _converter_formato_legado(dados: dict) -> list[dict]:
     return itens
 
 
-def carregar_base_aprendizado(arquivo: Path = ARQUIVO_APRENDIZADO) -> list[dict]:
-    caminho = Path(arquivo)
-    dados: object = []
-
-    if not caminho.is_file():
-        if caminho == ARQUIVO_APRENDIZADO and ARQUIVO_APRENDIZADO_LEGADO.is_file():
-            dados = carregar_json_seguro(ARQUIVO_APRENDIZADO_LEGADO, {})
-        else:
-            return []
-    else:
-        dados = carregar_json_seguro(caminho, [])
-
+def _normalizar_carga_bruta(dados: object) -> list[dict]:
     if isinstance(dados, dict) and isinstance(dados.get("items"), list):
         bruto = dados.get("items", [])
     elif isinstance(dados, dict):
@@ -103,24 +95,77 @@ def carregar_base_aprendizado(arquivo: Path = ARQUIVO_APRENDIZADO) -> list[dict]
         bruto = []
 
     itens = []
-    vistos = set()
+    vistos_ids = set()
     for raw in bruto:
         item = _normalizar_item(raw)
         if not item:
             continue
-        if item["id"] in vistos:
+        if item["id"] in vistos_ids:
             item["id"] = _id_curto()
-        vistos.add(item["id"])
+        vistos_ids.add(item["id"])
         itens.append(item)
-
-    if caminho == ARQUIVO_APRENDIZADO:
-        salvar_base_aprendizado(itens, arquivo=caminho)
     return itens
 
 
+def _carregar_base_json(caminho: Path) -> list[dict]:
+    if not caminho.is_file():
+        return []
+    dados = carregar_json_seguro(caminho, {})
+    return _normalizar_carga_bruta(dados)
+
+
+def _garantir_migracao_legado() -> None:
+    global _MIGRACAO_LEGADO_CONCLUIDA
+    if _MIGRACAO_LEGADO_CONCLUIDA:
+        return
+    _MIGRACAO_LEGADO_CONCLUIDA = True
+
+    if _REPO.has_items():
+        return
+
+    itens: list[dict] = []
+    for origem in (ARQUIVO_APRENDIZADO, ARQUIVO_APRENDIZADO_LEGADO):
+        if not origem.is_file():
+            continue
+        dados = carregar_json_seguro(origem, {})
+        itens.extend(_normalizar_carga_bruta(dados))
+
+    # Não migra vazio para evitar sobrescrever base já ativa em futuros boots.
+    if not itens:
+        return
+
+    dedup = {}
+    for item in itens:
+        chave = (
+            item.get("gatilho_normalizado", ""),
+            item.get("resposta", ""),
+        )
+        dedup[chave] = item
+
+    _REPO.bootstrap_if_empty(list(dedup.values()))
+
+
+def carregar_base_aprendizado(arquivo: Path = ARQUIVO_APRENDIZADO) -> list[dict]:
+    caminho = Path(arquivo)
+    if caminho != ARQUIVO_APRENDIZADO:
+        return _carregar_base_json(caminho)
+
+    _garantir_migracao_legado()
+    return _REPO.list_items()
+
+
 def salvar_base_aprendizado(itens: list[dict], arquivo: Path = ARQUIVO_APRENDIZADO) -> bool:
-    payload = {"versao": 2, "items": itens}
-    return salvar_json_seguro(Path(arquivo), payload)
+    caminho = Path(arquivo)
+    itens_validos = _normalizar_carga_bruta(itens)
+
+    if caminho != ARQUIVO_APRENDIZADO:
+        payload = {"versao": 2, "items": itens_validos}
+        salvar_json_seguro(caminho, payload)
+        return True
+
+    _garantir_migracao_legado()
+    _REPO.replace_all(itens_validos)
+    return True
 
 
 def listar_aprendizados() -> list[dict]:
@@ -131,83 +176,84 @@ def listar_aprendizados() -> list[dict]:
 def salvar_aprendizado(pergunta: str, resposta: str, categoria: str = "geral") -> int:
     pergunta = (pergunta or "").strip()
     resposta = (resposta or "").strip()
+    categoria = (categoria or "geral").strip() or "geral"
+
     if not pergunta or not resposta:
         raise ValueError("Pergunta e resposta precisam estar preenchidas.")
 
-    itens = carregar_base_aprendizado()
+    _garantir_migracao_legado()
+
     pergunta_norm = normalizar_texto(pergunta)
-
-    for item in itens:
-        if item["gatilho_normalizado"] == pergunta_norm and item["resposta"].strip() == resposta:
-            item["ativo"] = True
-            item["categoria"] = categoria or item.get("categoria", "geral")
-            item["atualizado_em"] = _agora()
-            salvar_base_aprendizado(itens)
-            return len([i for i in itens if i["gatilho_normalizado"] == pergunta_norm])
-
-    novo = _normalizar_item(
-        {
-            "gatilho": pergunta,
-            "resposta": resposta,
-            "categoria": categoria or "geral",
-            "ativo": True,
-            "criado_em": _agora(),
-            "atualizado_em": _agora(),
-        }
-    )
-    if not novo:
+    if not pergunta_norm:
         raise ValueError("Pergunta e resposta precisam estar preenchidas.")
-    itens.append(novo)
-    salvar_base_aprendizado(itens)
-    return len([i for i in itens if i["gatilho_normalizado"] == pergunta_norm])
+
+    agora = _agora()
+    return _REPO.upsert_for_trigger_response(
+        item_id=_id_curto(),
+        gatilho=pergunta,
+        gatilho_normalizado=pergunta_norm,
+        resposta=resposta,
+        categoria=categoria,
+        criado_em=agora,
+        atualizado_em=agora,
+    )
 
 
-def atualizar_aprendizado(item_id: str, gatilho: str | None = None, resposta: str | None = None, categoria: str | None = None, ativo: bool | None = None) -> dict | None:
-    itens = carregar_base_aprendizado()
-    for item in itens:
-        if item.get("id") != item_id:
-            continue
-        if gatilho is not None:
-            gatilho = gatilho.strip()
-            if gatilho:
-                item["gatilho"] = gatilho
-                item["gatilho_normalizado"] = normalizar_texto(gatilho)
-        if resposta is not None and resposta.strip():
-            item["resposta"] = resposta.strip()
-        if categoria is not None:
-            item["categoria"] = categoria.strip() or "geral"
-        if ativo is not None:
-            item["ativo"] = bool(ativo)
-        item["atualizado_em"] = _agora()
-        salvar_base_aprendizado(itens)
-        return item
-    return None
+def atualizar_aprendizado(
+    item_id: str,
+    gatilho: str | None = None,
+    resposta: str | None = None,
+    categoria: str | None = None,
+    ativo: bool | None = None,
+) -> dict | None:
+    _garantir_migracao_legado()
+
+    gatilho_limpo: str | None = None
+    gatilho_norm: str | None = None
+    if gatilho is not None:
+        g = gatilho.strip()
+        if g:
+            gatilho_limpo = g
+            gatilho_norm = normalizar_texto(g)
+
+    resposta_limpa: str | None = None
+    if resposta is not None and resposta.strip():
+        resposta_limpa = resposta.strip()
+
+    categoria_limpa: str | None = None
+    if categoria is not None:
+        categoria_limpa = categoria.strip() or "geral"
+
+    return _REPO.update_item(
+        item_id=item_id,
+        gatilho=gatilho_limpo,
+        gatilho_normalizado=gatilho_norm,
+        resposta=resposta_limpa,
+        categoria=categoria_limpa,
+        ativo=ativo,
+        atualizado_em=_agora(),
+    )
 
 
 def remover_aprendizado(item_id: str) -> bool:
-    itens = carregar_base_aprendizado()
-    total_antes = len(itens)
-    itens = [item for item in itens if item.get("id") != item_id]
-    if len(itens) == total_antes:
-        return False
-    salvar_base_aprendizado(itens)
-    return True
+    _garantir_migracao_legado()
+    return _REPO.delete_item(item_id)
 
 
 def buscar_resposta_aprendida(msg: str) -> str | None:
+    _garantir_migracao_legado()
+
     texto = normalizar_texto(msg)
     if not texto:
         return None
 
-    itens = [i for i in carregar_base_aprendizado() if i.get("ativo", True)]
-
-    exatas = [i for i in itens if i.get("gatilho_normalizado") == texto]
+    exatas = _REPO.list_active_exact(texto)
     if exatas:
-        return random.choice(exatas).get("resposta")
+        return random.choice(exatas)
 
-    similares = [i for i in itens if i.get("gatilho_normalizado") and i["gatilho_normalizado"] in texto]
+    similares = _REPO.list_active_similar(texto)
     if similares:
-        return random.choice(similares).get("resposta")
+        return random.choice(similares)
 
     return None
 

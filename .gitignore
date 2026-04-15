@@ -1,12 +1,39 @@
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+
 # Python
 venv/
 venv311/
+.venv/
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# Buildozer / Android
-.buildozer/
-bin/*.apk
+# Flutter / Dart
+frontend_flutter/.dart_tool/
+frontend_flutter/build/
+frontend_flutter/android/build/
+frontend_flutter/.flutter-plugins-dependencies
+frontend_flutter/.packages
 
-# Outros
+# Build / release artifacts
+dist/
+*.apk
+*.aab
+*.ipa
+
+# Runtime data (backend)
+backend_python/data/*
+!backend_python/data/.gitkeep
+
+# Logs / temp
 *.log
+*.tmp
+tmp/
+
+# Local secrets
+.env.nova

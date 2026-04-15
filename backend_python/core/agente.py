@@ -9,9 +9,9 @@ import webbrowser
 
 import requests
 
+from core.assistente_plus import formatar_resposta_pesquisa, pesquisar_na_internet
 from core.caminhos import pasta_dados_app
 from core.memoria import carregar_memoria_usuario, salvar_memoria_usuario
-from core.pesquisa import gerar_pesquisa_wikipedia
 from core.respostas import normalizar_texto
 from core.seguranca import carregar_json_seguro, salvar_json_seguro
 
@@ -121,11 +121,11 @@ def _tool_relembrar_objetivos():
     return "Objetivos recentes:\n" + "\n".join(f"{i}. {o}" for i, o in enumerate(ultimos, start=1))
 
 
-def _tool_pesquisar_wikipedia(consulta):
-    resultado = gerar_pesquisa_wikipedia(consulta)
-    if not resultado:
-        return ""
-    return f"{resultado['titulo']}: {resultado['resumo']}"
+def _tool_pesquisar_web(consulta):
+    out = pesquisar_na_internet(consulta)
+    if out.get("ok"):
+        return formatar_resposta_pesquisa(out, max_fontes=4, max_links=2)
+    return ""
 
 
 def _tool_mercado_snapshot():
@@ -168,7 +168,8 @@ TOOLS = {
     "hora_data": lambda _: _tool_hora_data(),
     "salvar_objetivo": _tool_salvar_objetivo,
     "relembrar_objetivos": lambda _: _tool_relembrar_objetivos(),
-    "pesquisar_wikipedia": _tool_pesquisar_wikipedia,
+    "pesquisar_web": _tool_pesquisar_web,
+    "pesquisar_wikipedia": _tool_pesquisar_web,
     "mercado_snapshot": lambda _: _tool_mercado_snapshot(),
     "abrir_google": _tool_abrir_google,
 }
@@ -213,7 +214,7 @@ def planejar_objetivo(objetivo, contexto=None):
 
     if any(k in t for k in ("pesquis", "buscar", "procure", "sobre")):
         consulta = _extrair_consulta(texto)
-        passos.append(PassoPlano("pesquisar_wikipedia", f"Pesquisar sobre {consulta}", {"consulta": consulta}))
+        passos.append(PassoPlano("pesquisar_web", f"Pesquisar na web sobre {consulta}", {"consulta": consulta}))
 
     if any(k in t for k in ("resuma", "resumir", "resumo")) and ":" in texto:
         conteudo = texto.split(":", 1)[1].strip()
@@ -259,7 +260,7 @@ def _executar_tool(acao, parametros):
         return fn(parametros.get("texto", ""))
     if acao == "salvar_objetivo":
         return fn(parametros.get("objetivo", ""))
-    if acao == "pesquisar_wikipedia":
+    if acao in {"pesquisar_wikipedia", "pesquisar_web"}:
         return fn(parametros.get("consulta", ""))
     if acao == "abrir_google":
         return fn(parametros.get("consulta", ""))
@@ -275,20 +276,15 @@ def executar_agente(objetivo, contexto=None):
     confirmacao = None
 
     for passo in plano:
-        if passo.sensivel:
-            confirmacao = {"acao": passo.acao, "descricao": passo.descricao, "parametros": passo.parametros}
-            observacoes.append(
-                f"Ação sensível pendente: {passo.descricao}. Responda 'sim' para confirmar ou 'não' para cancelar."
-            )
-            break
-
         try:
             passo.status = "executando"
             saida = _executar_tool(passo.acao, passo.parametros)
+            if passo.sensivel:
+                observacoes.append(f"Ação sensível executada automaticamente: {passo.descricao}.")
             # Replanejamento simples: se pesquisa não retorna, sugere fallback.
-            if passo.acao == "pesquisar_wikipedia" and not saida:
+            if passo.acao in {"pesquisar_wikipedia", "pesquisar_web"} and not saida:
                 passo.status = "falhou"
-                passo.erro = "Sem resumo encontrado na Wikipedia."
+                passo.erro = "Sem resumo encontrado na web."
                 observacoes.append(f"{passo.descricao}: sem resumo disponível. Posso abrir no Google se você quiser.")
             else:
                 passo.status = "concluido"
@@ -370,14 +366,14 @@ def executar_objetivo_background(objetivo, contexto=None):
     falhas = 0
 
     for passo in plano:
-        if passo.sensivel:
-            pulados += 1
-            continue
         try:
             valor = _executar_tool(passo.acao, passo.parametros)
             passo.status = "concluido"
             passo.saida = str(valor)
-            saidas.append(f"{passo.descricao}: {passo.saida}")
+            if passo.sensivel:
+                saidas.append(f"{passo.descricao} (sensível, auto): {passo.saida}")
+            else:
+                saidas.append(f"{passo.descricao}: {passo.saida}")
         except Exception as exc:
             falhas += 1
             passo.status = "falhou"

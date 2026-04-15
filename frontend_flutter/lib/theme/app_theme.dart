@@ -9,7 +9,7 @@ class AppTheme {
   static const Color backgroundColor = Color(0xFF000000);
   static const Color surfaceColor = Color(0xFFFFFFFF);
 
-  static ThemeData get lightTheme {
+  static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(

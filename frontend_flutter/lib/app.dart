@@ -13,7 +13,7 @@ class NovaFrontendApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'NOVA Frontend',
-      theme: AppTheme.lightTheme,
+      theme: AppTheme.darkTheme,
       home: const HomePage(),
     );
   }

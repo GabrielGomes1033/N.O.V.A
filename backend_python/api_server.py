@@ -52,6 +52,7 @@ from core.assistente_plus import (
     consultar_clima_por_coordenadas,
     cotacoes_financeiras,
     formatar_cotacoes_humanas,
+    formatar_resposta_pesquisa,
     listar_lembretes,
     pesquisar_na_internet,
     resumo_adaptacao_usuario,
@@ -71,11 +72,8 @@ from core.nova_unica import (
     gerar_alertas_recomendacoes,
 )
 from core.aprendizado_admin import (
-    atualizar_aprendizado,
-    exportar_aprendizado_json,
     listar_aprendizados,
-    remover_aprendizado,
-    salvar_aprendizado as salvar_aprendizado_painel,
+    salvar_aprendizado as salvar_aprendizado_admin,
 )
 from core.memoria import carregar_memoria_usuario, formatar_memoria_usuario, salvar_memoria_usuario, registrar_interacao_usuario
 from core.painel_admin import (
@@ -121,9 +119,16 @@ from core.autonomia_runtime import (
 from core.session_audit import listar_auditoria_sessao, validar_cadeia_auditoria, registrar_evento_sessao
 from core.ops_status import status_operacional
 from core.document_analysis import analisar_documento_base64
-from core.approval_flow import criar_aprovacao_sensivel, listar_aprovacoes, decidir_aprovacao
+from core.approval_flow import listar_aprovacoes, decidir_aprovacao
 from core.memoria_assuntos import aprender_assuntos, perfil_assuntos, dica_contextual_para_pergunta
 from core.help_center import ajuda_texto_humano, ajuda_topicos
+from routes.chat_routes import handle_chat_post
+from routes.knowledge_routes import (
+    handle_knowledge_delete,
+    handle_knowledge_get,
+    handle_knowledge_post,
+    handle_knowledge_put,
+)
 
 
 def _novo_contexto():
@@ -349,6 +354,37 @@ def processar_mensagem(user):
         pass
     premium_aprender(CONTEXTO.get("nome_usuario", "") or "default", user)
 
+    def aprender_de_pesquisa(consulta: str, resumo: str, fontes: list[str] | None = None) -> None:
+        consulta_limpa = (consulta or "").strip()
+        resumo_limpo = (resumo or "").strip()
+        fontes = fontes or []
+        if not consulta_limpa or not resumo_limpo:
+            return
+        try:
+            salvar_aprendizado_admin(
+                f"pesquisa sobre {consulta_limpa}",
+                resumo_limpo,
+                categoria="pesquisa_web",
+            )
+            salvar_aprendizado_admin(
+                f"o que foi pesquisado sobre {consulta_limpa}",
+                resumo_limpo,
+                categoria="pesquisa_web",
+            )
+            if fontes:
+                salvar_aprendizado_admin(
+                    f"fontes da pesquisa sobre {consulta_limpa}",
+                    ", ".join(fontes),
+                    categoria="pesquisa_web",
+                )
+            aprender_assuntos(
+                texto=f"{consulta_limpa}\n{resumo_limpo}\n{' '.join(fontes)}",
+                origem="web_search",
+                resumo=resumo_limpo,
+            )
+        except Exception:
+            pass
+
     if CONTEXTO.get("rotina_pendente"):
         resp_rotina = processar_confirmacao_rotina(user, contexto=CONTEXTO)
         if resp_rotina:
@@ -560,8 +596,8 @@ def processar_mensagem(user):
             pesquisa = pesquisar_na_internet(consulta)
             if pesquisa.get("ok"):
                 fontes = pesquisa.get("fontes", [])
-                fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
-                return ret(f"{pesquisa.get('resumo', '')}{fontes_txt}", evento="web_search")
+                aprender_de_pesquisa(consulta, str(pesquisa.get("resumo", "")), fontes)
+                return ret(formatar_resposta_pesquisa(pesquisa), evento="web_search")
             return ret(
                 "Não consegui pesquisar agora. Se quiser, me ensine essa resposta usando /ensinar pergunta = resposta."
             )
@@ -574,8 +610,8 @@ def processar_mensagem(user):
             resultado = pesquisar_na_internet(consulta)
             if resultado.get("ok"):
                 fontes = resultado.get("fontes", [])
-                fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
-                return ret(resultado.get("resumo", "") + fontes_txt, evento="web_search")
+                aprender_de_pesquisa(consulta, str(resultado.get("resumo", "")), fontes)
+                return ret(formatar_resposta_pesquisa(resultado), evento="web_search")
         return ret("Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.", ok=False, evento="web_search")
 
     if any(k in user_l for k in ["pesquise na internet", "procure na internet", "buscar na internet", "pesquise sobre", "procure sobre"]):
@@ -584,8 +620,8 @@ def processar_mensagem(user):
         resultado = pesquisar_na_internet(consulta)
         if resultado.get("ok"):
             fontes = resultado.get("fontes", [])
-            fontes_txt = f"\nFontes: {', '.join(fontes)}" if fontes else ""
-            return ret(resultado.get("resumo", "") + fontes_txt, evento="web_search")
+            aprender_de_pesquisa(consulta, str(resultado.get("resumo", "")), fontes)
+            return ret(formatar_resposta_pesquisa(resultado), evento="web_search")
         return ret("Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.", ok=False, evento="web_search")
 
     if user_l.startswith("/lembrar ") or user_l.startswith("me lembre") or user_l.startswith("lembre-me"):
@@ -679,9 +715,14 @@ def processar_mensagem(user):
             return ret(f"Resultado: {calc.get('resultado')}", evento="calc")
         pesquisa = pesquisar_na_internet(f"resolver expressão matemática: {expr}")
         if pesquisa.get("ok"):
+            aprender_de_pesquisa(
+                f"resolver expressão matemática: {expr}",
+                str(pesquisa.get("resumo", "")),
+                pesquisa.get("fontes", []),
+            )
             return ret(
                 "Não consegui resolver internamente com total confiança, então pesquisei para confirmar:\n"
-                + pesquisa.get("resumo", ""),
+                + formatar_resposta_pesquisa(pesquisa),
                 evento="calc",
             )
         return ret(
@@ -1028,8 +1069,7 @@ class NovaHandler(BaseHTTPRequestHandler):
                 }
             )
             return
-        if path == "/knowledge":
-            self._send_json(exportar_aprendizado_json())
+        if handle_knowledge_get(path=path, send_json=self._send_json):
             return
         if path == "/admin/users":
             usuarios = listar_usuarios()
@@ -1172,10 +1212,12 @@ class NovaHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        if path == "/chat":
-            message = str(body.get("message", "")).strip()
-            reply = processar_mensagem(message)
-            self._send_json({"ok": True, "reply": reply})
+        if handle_chat_post(
+            path=path,
+            body=body,
+            process_message=processar_mensagem,
+            send_json=self._send_json,
+        ):
             return
 
         if path == "/backup/restore":
@@ -1254,23 +1296,18 @@ class NovaHandler(BaseHTTPRequestHandler):
             origem = str(body.get("source", "api")).strip() or "api"
             out = solicitar_execucao_autonoma(objetivo, origem=origem)
             if out.get("error") == "confirmation_required":
-                risk = out.get("risk", {}) if isinstance(out.get("risk"), dict) else {}
-                risk_level = str(risk.get("nivel", "alto"))
-                required = 2 if risk_level == "alto" else 1
-                req = criar_aprovacao_sensivel(
-                    objective=objetivo,
-                    requested_by=str(self.headers.get("X-User-Name", "") or "api"),
-                    reason=f"tarefa autônoma sensível (risco {risk_level})",
-                    required_approvals=required,
-                )
+                ok, msg = enfileirar_tarefa(objetivo, origem=f"autonomia:{origem}:auto")
+                status = HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST
                 self._send_json(
                     {
-                        "ok": False,
-                        "error": "approval_required",
-                        "message": out.get("message", "Aprovação obrigatória."),
-                        "approval_request": req.get("request"),
+                        "ok": ok,
+                        "queued": ok,
+                        "message": msg,
+                        "autonomy_mode": "full_auto",
+                        "note": "Confirmação manual ignorada por configuração de autonomia total.",
+                        "risk": out.get("risk", {}),
                     },
-                    status=HTTPStatus.ACCEPTED,
+                    status=status,
                 )
                 return
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
@@ -1290,12 +1327,7 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/documents/analyze":
             filename = str(body.get("filename", "")).strip()
             content_b64 = str(body.get("content_base64", "")).strip()
-            cfg = carregar_config_painel()
-            auto_learn_raw = body.get("auto_learn")
-            if auto_learn_raw is None:
-                auto_learn = bool(cfg.get("auto_document_learning", True))
-            else:
-                auto_learn = bool(auto_learn_raw)
+            auto_learn = True
             out = analisar_documento_base64(filename, content_b64, auto_learn=auto_learn)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json(out, status=status)
@@ -1372,15 +1404,7 @@ class NovaHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        if path == "/knowledge":
-            gatilho = str(body.get("gatilho", "")).strip()
-            resposta = str(body.get("resposta", "")).strip()
-            categoria = str(body.get("categoria", "geral")).strip() or "geral"
-            if not gatilho or not resposta:
-                self._send_json({"ok": False, "error": "invalid_payload"}, status=HTTPStatus.BAD_REQUEST)
-                return
-            salvar_aprendizado_painel(gatilho, resposta, categoria=categoria)
-            self._send_json(exportar_aprendizado_json())
+        if handle_knowledge_post(path=path, body=body, send_json=self._send_json):
             return
 
         if path == "/admin/users":
@@ -1462,8 +1486,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {
                     "ok": resultado.get("ok") is True,
-                    "summary": resultado.get("resumo", ""),
+                    "summary": formatar_resposta_pesquisa(resultado) if resultado.get("ok") else resultado.get("resumo", ""),
                     "sources": resultado.get("fontes", []),
+                    "links": resultado.get("links", []),
                 }
             )
             return
@@ -1555,19 +1580,12 @@ class NovaHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        if path.startswith("/knowledge/"):
-            item_id = path.split("/")[-1]
-            item = atualizar_aprendizado(
-                item_id=item_id,
-                gatilho=body.get("gatilho"),
-                resposta=body.get("resposta"),
-                categoria=body.get("categoria"),
-                ativo=_bool_ou_none(body.get("ativo")),
-            )
-            if not item:
-                self._send_json({"ok": False, "error": "knowledge_not_found"}, status=HTTPStatus.NOT_FOUND)
-                return
-            self._send_json({"ok": True, "item": item})
+        if handle_knowledge_put(
+            path=path,
+            body=body,
+            bool_ou_none=_bool_ou_none,
+            send_json=self._send_json,
+        ):
             return
 
         if path.startswith("/admin/users/"):
@@ -1596,13 +1614,7 @@ class NovaHandler(BaseHTTPRequestHandler):
         if not self._rbac_ok(path, "DELETE"):
             return
 
-        if path.startswith("/knowledge/"):
-            item_id = path.split("/")[-1]
-            ok = remover_aprendizado(item_id)
-            if not ok:
-                self._send_json({"ok": False, "error": "knowledge_not_found"}, status=HTTPStatus.NOT_FOUND)
-                return
-            self._send_json({"ok": True, "removed": True, "items": listar_aprendizados()})
+        if handle_knowledge_delete(path=path, send_json=self._send_json):
             return
 
         if path.startswith("/admin/users/"):
