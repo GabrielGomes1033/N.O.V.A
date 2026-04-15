@@ -587,13 +587,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (_neuralVoiceHybridEnabled) {
       try {
         final ok = await _speakNeuralOnline(textoVoz, requestId);
-        if (ok) return;
+        if (ok) {
+          if (mounted) {
+            setState(() {
+              _systemStatus = 'Voz neural online ativa.';
+            });
+          }
+          return;
+        }
       } catch (_) {
-        // fallback local abaixo
+        if (mounted) {
+          setState(() {
+            _systemStatus = 'Voz neural indisponível, usando voz local.';
+          });
+        }
       }
     }
 
     if (requestId != _speakRequestId) return;
+    if (mounted) {
+      setState(() {
+        _systemStatus = 'Usando voz local do dispositivo.';
+      });
+    }
     final blocos = _quebrarEmBlocosDeFala(textoVoz);
     for (final bloco in blocos) {
       if (requestId != _speakRequestId) break;

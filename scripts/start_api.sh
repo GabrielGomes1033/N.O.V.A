@@ -3,15 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env.nova"
-HOST="${NOVA_API_HOST:-0.0.0.0}"
-PORT="${NOVA_API_PORT:-8000}"
+HOST=""
+PORT=""
+PYTHON_BIN=""
 
 show_help() {
-  echo "Uso: scripts/start_api.sh [--env ARQUIVO] [--host HOST] [--port PORT]"
+  echo "Uso: scripts/start_api.sh [--env ARQUIVO] [--host HOST] [--port PORT] [--python PYTHON]"
   echo
   echo "Exemplos:"
   echo "  scripts/start_api.sh"
   echo "  scripts/start_api.sh --env .env.nova --port 8080"
+  echo "  scripts/start_api.sh --python ./venv311/bin/python"
   echo
   echo "Ordem de carga:"
   echo "  1) Variáveis já exportadas no shell"
@@ -30,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port)
       PORT="$2"
+      shift 2
+      ;;
+    --python)
+      PYTHON_BIN="$2"
       shift 2
       ;;
     -h|--help)
@@ -54,6 +60,38 @@ else
   echo "Arquivo de ambiente não encontrado (${ENV_FILE}). Seguindo com variáveis atuais do shell."
 fi
 
+if [[ -z "${HOST}" ]]; then
+  HOST="${NOVA_API_HOST:-0.0.0.0}"
+fi
+if [[ -z "${PORT}" ]]; then
+  PORT="${NOVA_API_PORT:-8000}"
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  if [[ -n "${NOVA_PYTHON_BIN:-}" ]]; then
+    PYTHON_BIN="${NOVA_PYTHON_BIN}"
+  elif [[ -x "${ROOT_DIR}/venv311/bin/python" ]]; then
+    PYTHON_BIN="${ROOT_DIR}/venv311/bin/python"
+  elif [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+    PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
+
+# Se o python vier como caminho relativo (ex.: ./venv311/bin/python),
+# resolve em relação à raiz do projeto para funcionar de qualquer diretório.
+if [[ "${PYTHON_BIN}" != /* && "${PYTHON_BIN}" == */* ]]; then
+  if [[ -x "${ROOT_DIR}/${PYTHON_BIN}" ]]; then
+    PYTHON_BIN="${ROOT_DIR}/${PYTHON_BIN}"
+  fi
+fi
+
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1 && [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Python inválido: ${PYTHON_BIN}"
+  exit 1
+fi
+
 if [[ -n "${NOVA_BRAVE_API_KEY:-}" ]]; then
   SEARCH_PROVIDER="Brave Search API"
 elif [[ -n "${NOVA_SERPAPI_KEY:-}" || -n "${SERPAPI_API_KEY:-}" || -n "${SERPAPI_KEY:-}" ]]; then
@@ -64,6 +102,7 @@ fi
 
 echo "Subindo NOVA API em http://${HOST}:${PORT}"
 echo "Provider de busca principal: ${SEARCH_PROVIDER}"
+echo "Python selecionado: ${PYTHON_BIN}"
 
 cd "${ROOT_DIR}"
-exec python3 backend_python/api_server.py --host "${HOST}" --port "${PORT}"
+exec "${PYTHON_BIN}" backend_python/api_server.py --host "${HOST}" --port "${PORT}"
