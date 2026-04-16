@@ -154,6 +154,35 @@ Observações:
 - O aprendizado padrão via `/ensinar` foi mantido sem alterações.
 - Compatibilidade: `/agente` ainda funciona, mas o comando oficial agora é `/nova`.
 
+## Criar projeto no Notion ou Drive
+
+Se o Notion estiver configurado como provider padrão, a NOVA pode criar projetos por voz ou texto usando frases naturais.
+
+Formatos:
+```text
+/projeto <nome_do_projeto>
+/notion projeto <nome_do_projeto>
+```
+
+Exemplos naturais:
+```text
+Nova, crie um novo projeto chamado Atlas Comercial
+Nova, abre um projeto novo CRM Interno
+Novo projeto "Planejamento Q4"
+Adiciona no Notion um projeto chamado Portal do Cliente
+Crie para mim um projeto Roadmap 2026
+Nova, crie um projeto chamado Atlas Comercial na área Comercial com prioridade Alta
+Nova, cria um projeto chamado Portal do Cliente com descrição MVP do portal B2B e link https://exemplo.com
+Nova, cria um projeto chamado CRM Interno com responsável Gabriel Gomes
+```
+
+Observações:
+- Voz e texto usam o mesmo entendimento de comando.
+- Se você citar `Notion` na frase, a NOVA tenta criar lá mesmo que o provider padrão seja outro.
+- Se citar `Drive`, a NOVA força a criação no Google Drive.
+- Se faltar o nome, a assistente pede confirmação com exemplos prontos.
+- No Notion, ela também pode preencher `Descrição`, `Área`, `Prioridade`, `Responsável` e `Link` quando essas colunas existirem no banco.
+
 ## Comandos de admin
 
 Use esses comandos para operações administrativas e explicação técnica completa da arquitetura.

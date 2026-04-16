@@ -1523,7 +1523,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ),
                           ),
                           const SizedBox(width: 10),
-                          NovaCapabilityBadge(status: item['status'] ?? 'parcial'),
+                          NovaCapabilityBadge(
+                              status: item['status'] ?? 'parcial'),
                         ],
                       ),
                     ),
@@ -1882,16 +1883,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           topics = (t is List)
               ? t
                   .whereType<Map>()
-                  .where((e) => !isAdvancedItem(
-                      '${e['topic'] ?? ''} ${e['text'] ?? ''}'))
+                  .where((e) =>
+                      !isAdvancedItem('${e['topic'] ?? ''} ${e['text'] ?? ''}'))
                   .map((e) => Map<String, dynamic>.from(e))
                   .toList()
               : [];
           commands = (c is List)
               ? c
                   .whereType<Map>()
-                  .where((e) => !isAdvancedItem(
-                      '${e['cmd'] ?? ''} ${e['desc'] ?? ''}'))
+                  .where((e) =>
+                      !isAdvancedItem('${e['cmd'] ?? ''} ${e['desc'] ?? ''}'))
                   .map((e) => Map<String, dynamic>.from(e))
                   .toList()
               : [];
@@ -2222,8 +2223,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        NovaInput(
-                            controller: triggerCtrl, hintText: 'Gatilho'),
+                        NovaInput(controller: triggerCtrl, hintText: 'Gatilho'),
                         const SizedBox(height: 10),
                         NovaInput(
                             controller: responseCtrl,
@@ -3248,28 +3248,36 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget _buildMainColumn({
     required bool compact,
     required bool compressed,
+    bool wideChat = false,
   }) {
+    final topGap = compressed ? 8.0 : 12.0;
+    final composerGap = compressed ? 8.0 : 10.0;
     return Column(
       children: [
         NovaTopBar(
           onOpenQuickMenu: _openQuickMenu,
           onOpenUsersDialog: _openUsersDialog,
           onPickQuickPhoto: _pickQuickPhoto,
+          compact: compact,
+          compressed: compressed,
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: topGap),
         Expanded(
           child: NovaChatTimeline(
             chat: _chat,
             compact: compact,
+            wide: wideChat,
           ),
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: composerGap),
         NovaComposer(
           messageController: _messageController,
           composerAttachmentName: _composerAttachmentName,
           speechReady: _speechReady,
           isListening: _isListening,
           sending: _sending,
+          compact: compact,
+          compressed: compressed,
           onPickComposerAttachment: _pickComposerAttachment,
           onToggleListening: _toggleListening,
           onInitSpeech: () {
@@ -3281,31 +3289,94 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  List<String> _projectExamples() {
+    return const [
+      'Nova, crie um projeto chamado Atlas Comercial na área Comercial',
+      'Novo projeto "Portal do Cliente" com prioridade alta',
+      'Crie um projeto com descrição MVP B2B e link https://exemplo.com',
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final shellMaxWidth = screenWidth >= 1500
+        ? 860.0
+        : (screenWidth >= 1200
+            ? 760.0
+            : (screenWidth >= 900
+                ? 680.0
+                : (screenWidth >= 600 ? 560.0 : screenWidth)));
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
           const NovaGridBackground(),
           SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 390),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 410;
-                    final compressed = constraints.maxHeight < 650;
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                      child: _buildMainColumn(
-                        compact: compact,
-                        compressed: compressed,
+            child: LayoutBuilder(
+              builder: (context, viewport) {
+                final useWideLayout = viewport.maxWidth >= 980;
+                final compressed = viewport.maxHeight < 650;
+
+                final chatShell = ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: shellMaxWidth),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 560;
+                      final wideChat = constraints.maxWidth >= 680;
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                        child: _buildMainColumn(
+                          compact: compact,
+                          compressed: compressed,
+                          wideChat: wideChat,
+                        ),
+                      );
+                    },
+                  ),
+                );
+
+                if (!useWideLayout) {
+                  return Center(child: chatShell);
+                }
+
+                final railWidth = viewport.maxWidth >= 1400 ? 360.0 : 320.0;
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: railWidth,
+                        child: NovaWorkspaceRail(
+                          greeting: '${_periodGreeting()}!',
+                          systemStatus: _systemStatus,
+                          apiBaseUrl: _api.baseUrl,
+                          wakeWord: _config['wake_word']
+                                      ?.toString()
+                                      .trim()
+                                      .isNotEmpty ==
+                                  true
+                              ? _config['wake_word'].toString().trim()
+                              : 'nova',
+                          voiceEnabled: _ttsEnabled,
+                          speechReady: _speechReady,
+                          autonomyEnabled: _config['autonomia_ativa'] == true,
+                          continuousWake: _effectiveContinuousWake,
+                          examples: _projectExamples(),
+                          compressed: compressed,
+                        ),
                       ),
-                    );
-                  },
-                ),
-              ),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.center,
+                          child: chatShell,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ],

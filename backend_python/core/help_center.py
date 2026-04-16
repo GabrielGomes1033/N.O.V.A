@@ -17,7 +17,8 @@ def ajuda_topicos() -> dict[str, Any]:
         {"cmd": "/lembrar <texto> <data/hora>", "desc": "Cria lembrete com data/hora."},
         {"cmd": "/lembretes", "desc": "Lista lembretes ativos."},
         {"cmd": "/calcular <expressao>", "desc": "Executa cálculo."},
-        {"cmd": "/projeto <nome>", "desc": "Cria projeto no Google Drive."},
+        {"cmd": "/projeto <nome>", "desc": "Cria projeto no destino padrão configurado (Notion ou Google Drive)."},
+        {"cmd": "/notion projeto <nome>", "desc": "Cria projeto diretamente no Notion."},
         {"cmd": "/admin login <u> <s> [2fa]", "desc": "Login administrativo."},
         {"cmd": "/admin 2fa status|ligar|desligar|obrigatorio on|off|codigo|rotacionar", "desc": "Gerencia 2FA admin."},
         {"cmd": "/admin jarvis2 status|ligar|desligar|enfileirar|fila|limpar|relatorio", "desc": "Gerencia runtime JARVIS2."},
@@ -53,6 +54,7 @@ def ajuda_texto_humano() -> str:
     linhas = [
         "Help da NOVA:",
         "Eu sou a NOVA, uma assistente de IA com memória, voz, RAG, automações seguras e modo autônomo controlado.",
+        "Você também pode pedir por voz ou texto algo como 'Nova, crie um novo projeto chamado Atlas'.",
         "",
         "Tópicos principais:",
     ]

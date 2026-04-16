@@ -71,6 +71,12 @@ from core.nova_unica import (
     resumo_metricas_recursos,
     gerar_alertas_recomendacoes,
 )
+from core.notion_projects import (
+    criar_projeto_notion,
+    interpretar_pedido_criacao_projeto,
+    notion_disponivel,
+    provider_padrao_projeto,
+)
 from core.aprendizado_admin import (
     listar_aprendizados,
     salvar_aprendizado as salvar_aprendizado_admin,
@@ -155,6 +161,57 @@ def sincronizar_memoria():
     memoria["idioma_preferido"] = CONTEXTO.get("idioma_preferido", "pt")
     memoria["tratamento"] = CONTEXTO.get("tratamento", "")
     salvar_memoria_usuario(memoria)
+
+
+def _exemplos_criacao_projeto() -> str:
+    return (
+        "Exemplos por voz ou texto:\n"
+        "- Nova, crie um novo projeto chamado Atlas Comercial\n"
+        "- Nova, abre um projeto novo CRM Interno\n"
+        "- Nova, crie um projeto chamado Atlas Comercial na área Comercial com prioridade Alta\n"
+        "- Novo projeto \"Planejamento Q4\"\n"
+        "- /projeto Assistente Financeiro IA\n"
+        "- /notion projeto Roadmap 2026"
+    )
+
+
+def _criar_projeto_remoto(
+    nome_projeto: str,
+    descricao: str = "",
+    provider: str = "",
+    details: dict[str, str] | None = None,
+) -> tuple[str, bool, dict | str]:
+    destino = (provider or "").strip().lower() or provider_padrao_projeto()
+    if destino == "notion":
+        ok, payload = criar_projeto_notion(nome_projeto, description=descricao, details=details)
+        return "notion", ok, payload
+
+    ok, payload = criar_projeto_drive(nome_projeto=nome_projeto, descricao=descricao)
+    return "drive", ok, payload
+
+
+def _formatar_resposta_projeto(provider: str, payload: dict) -> str:
+    if provider == "notion":
+        base = (
+            f"Projeto criado no Notion: {payload.get('project_name')}.\n"
+            f"Página: {payload.get('page_url') or payload.get('page_id')}"
+        )
+        extras = []
+        filled_fields = payload.get("filled_fields") or []
+        if isinstance(filled_fields, list) and filled_fields:
+            extras.append("Campos preenchidos: " + ", ".join(str(item) for item in filled_fields))
+        warnings = payload.get("warnings") or []
+        if isinstance(warnings, list) and warnings:
+            extras.append("Observações: " + " | ".join(str(item) for item in warnings))
+        if extras:
+            return base + "\n" + "\n".join(extras)
+        return base
+
+    return (
+        f"Projeto criado no Google Drive: {payload.get('folder_name')}.\n"
+        f"Pasta: {payload.get('folder_link') or payload.get('folder_id')}\n"
+        f"Arquivo de plano: {payload.get('file_link') or payload.get('file_id')}"
+    )
 
 
 def _cmd_admin(texto):
@@ -731,27 +788,44 @@ def processar_mensagem(user):
             evento="calc",
         )
 
-    if user_l.startswith("/projeto ") or "crie um projeto" in user_l or "criar projeto" in user_l:
-        nome_projeto = ""
-        if user_l.startswith("/projeto "):
-            nome_projeto = user.split(" ", 1)[1].strip()
-        else:
-            m = re.search(r"(?:projeto|projeto chamado)\s+(.+)$", user, flags=re.IGNORECASE)
-            if m:
-                nome_projeto = m.group(1).strip(" .")
-        if len(nome_projeto) < 2:
-            return ret("Me diga o nome do projeto. Exemplo: /projeto Assistente Financeiro IA")
-        ok, payload = criar_projeto_drive(
-            nome_projeto=nome_projeto,
-            descricao=f"Projeto solicitado por {CONTEXTO.get('nome_usuario') or 'usuário'}: {nome_projeto}",
-        )
-        if ok:
+    pedido_projeto = interpretar_pedido_criacao_projeto(user)
+    if pedido_projeto.matched:
+        nome_projeto = (pedido_projeto.project_name or "").strip()
+        provider = pedido_projeto.provider or provider_padrao_projeto()
+        if provider == "notion" and pedido_projeto.explicit_provider and not notion_disponivel():
             return ret(
-                f"Projeto criado no Google Drive: {payload.get('folder_name')}.\n"
-                f"Pasta: {payload.get('folder_link') or payload.get('folder_id')}\n"
-                f"Arquivo de plano: {payload.get('file_link') or payload.get('file_id')}"
+                "Você pediu para criar no Notion, mas a integração ainda não está configurada.\n"
+                "Defina NOVA_NOTION_TOKEN e NOVA_NOTION_PROJECTS_DATA_SOURCE_ID, "
+                "NOVA_NOTION_PROJECTS_DATABASE_ID ou NOVA_NOTION_PROJECTS_PAGE_ID.\n\n"
+                + _exemplos_criacao_projeto(),
+                ok=False,
+                evento="notion_project",
             )
-        return ret(str(payload), ok=False, evento="drive_project")
+        if len(nome_projeto) < 2:
+            destino = "Notion" if provider == "notion" else "Google Drive"
+            return ret(
+                f"Me diga o nome do projeto para eu criar no {destino}.\n\n" + _exemplos_criacao_projeto(),
+                ok=False,
+                evento="project_intent",
+            )
+        provider_usado, ok, payload = _criar_projeto_remoto(
+            nome_projeto,
+            descricao=f"Projeto solicitado por {CONTEXTO.get('nome_usuario') or 'usuário'}: {nome_projeto}",
+            provider=provider,
+            details={
+                "description": pedido_projeto.description,
+                "area": pedido_projeto.area,
+                "priority": pedido_projeto.priority,
+                "responsible": pedido_projeto.responsible,
+                "link": pedido_projeto.link,
+            },
+        )
+        if ok and isinstance(payload, dict):
+            return ret(
+                _formatar_resposta_projeto(provider_usado, payload),
+                evento=f"{provider_usado}_project",
+            )
+        return ret(str(payload), ok=False, evento=f"{provider_usado}_project")
 
     # Orquestrador inteligente automático para perguntas mais livres.
     orquestrado = orquestrar_consulta(user)
@@ -1551,9 +1625,29 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/project/create":
             nome = str(body.get("name", "")).strip()
             descricao = str(body.get("description", "")).strip()
-            ok, payload = criar_projeto_drive(nome, descricao)
+            provider = str(body.get("provider", "")).strip().lower()
+            provider_usado, ok, payload = _criar_projeto_remoto(
+                nome,
+                descricao,
+                provider=provider,
+                details={
+                    "description": descricao,
+                    "area": str(body.get("area", "")).strip(),
+                    "priority": str(body.get("priority", "")).strip(),
+                    "responsible": str(body.get("responsible", "")).strip(),
+                    "link": str(body.get("link", "")).strip(),
+                },
+            )
             status = HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST
-            self._send_json({"ok": ok, "project": payload if ok else None, "error": None if ok else payload}, status=status)
+            self._send_json(
+                {
+                    "ok": ok,
+                    "provider": provider_usado,
+                    "project": payload if ok else None,
+                    "error": None if ok else payload,
+                },
+                status=status,
+            )
             return
 
         if path == "/voice/neural":
