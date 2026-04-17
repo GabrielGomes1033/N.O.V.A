@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  nova-api:
+    build:
+      context: ./backend_python
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"  # Acesse via http://localhost:8000
+    environment:
+      - NOVA_ADMIN_USER=admin
+      - NOVA_ADMIN_PASSWORD=senha_forte_mude_apos_deploy!
+    volumes:
+      - ./backend_python/data:/app/data  # Persistência memória/aprendizado
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  nova_data:

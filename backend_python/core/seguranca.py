@@ -1,6 +1,8 @@
 # Segurança e criptografia da NOVA.
 from __future__ import annotations
 
+import logging
+
 from copy import deepcopy
 from pathlib import Path
 import base64
@@ -9,6 +11,8 @@ import hmac
 import json
 import os
 import secrets
+
+logger = logging.getLogger(__name__)
 
 from core.caminhos import pasta_dados_app
 
@@ -52,7 +56,8 @@ def obter_cifra():
         if not chave:
             return None
         return Fernet(chave)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Falha ao obter cifra de criptografia: {e}")
         return None
 
 

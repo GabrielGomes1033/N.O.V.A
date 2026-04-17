@@ -37,3 +37,4 @@ tmp/
 
 # Local secrets
 .env.nova
+backend_python/data/.nova_crypto.key
