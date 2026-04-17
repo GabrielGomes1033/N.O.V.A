@@ -13,24 +13,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/7] Compilando backend..."
+echo "[1/8] Compilando backend..."
 cd "${ROOT_DIR}"
 python3 -m compileall -q backend_python
 
-echo "[2/7] Analisando frontend..."
+echo "[2/8] Rodando testes do backend..."
+python3 -m unittest discover -s backend_python/tests -q
+
+echo "[3/8] Analisando frontend..."
 cd "${ROOT_DIR}/frontend_flutter"
 flutter analyze
 
-echo "[3/7] Rodando testes do frontend..."
+echo "[4/8] Rodando testes do frontend..."
 flutter test
 
-echo "[4/7] Subindo API local (${BASE_URL})..."
+echo "[5/8] Subindo API local (${BASE_URL})..."
 cd "${ROOT_DIR}"
 python3 backend_python/api_server.py --host "${HOST}" --port "${PORT}" >/tmp/nova_api_integration.log 2>&1 &
 API_PID=$!
 sleep 2
 
-echo "[5/7] Testando endpoints principais..."
+echo "[6/8] Testando endpoints principais..."
 curl -fsS "${BASE_URL}/health" >/dev/null
 curl -fsS "${BASE_URL}/help/topics" >/dev/null
 curl -fsS "${BASE_URL}/memory/subjects?limit=5" >/dev/null
@@ -46,11 +49,11 @@ curl -fsS -X POST "${BASE_URL}/documents/analyze" \
   -H "Content-Type: application/json" \
   --data-binary "{\"filename\":\"teste_ci.txt\",\"content_base64\":\"${DOC_B64}\"}" >/dev/null
 
-echo "[6/7] Validando logs da API..."
+echo "[7/8] Validando logs da API..."
 if grep -qi "traceback" /tmp/nova_api_integration.log; then
   echo "Falha: traceback encontrado em /tmp/nova_api_integration.log"
   exit 1
 fi
 
-echo "[7/7] Concluído com sucesso."
+echo "[8/8] Concluído com sucesso."
 echo "OK: integração backend+frontend validada."

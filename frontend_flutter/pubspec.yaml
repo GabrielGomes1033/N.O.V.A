@@ -29,7 +29,6 @@ dependencies:
   device_info_plus: ^10.1.2
   package_info_plus: ^8.0.2
   battery_plus: ^6.0.2
-  geolocator: ^13.0.1
   image_picker: ^1.1.2
   pdf: ^3.11.1
   printing: ^5.14.0

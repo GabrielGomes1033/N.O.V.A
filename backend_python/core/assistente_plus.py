@@ -240,6 +240,137 @@ def _consulta_base(consulta: str) -> str:
     return c or (consulta or "").strip()
 
 
+def extrair_consulta_pesquisa_web(mensagem: str) -> str:
+    texto = _limpar((mensagem or "").strip(" \n\t"))
+    if not texto:
+        return ""
+
+    padroes = (
+        r"^(?:\/google)\s+",
+        r"^(?:pesquise|pesquisar|procure|procurar|busque|buscar)\s+(?:na internet\s+)?(?:sobre\s+)?",
+        r"^(?:me explique|explique|explica)\s+",
+        r"^(?:me fale sobre|fale sobre|quero saber sobre)\s+",
+        r"^(?:me atualize sobre|atualize sobre|ultimas noticias sobre|últimas notícias sobre|noticias sobre|notícias sobre)\s+",
+        r"^(?:qual a diferenca entre|qual a diferença entre|diferenca entre|diferença entre|compare)\s+",
+        r"^(?:o que e|o que é|quem e|quem é|qual e|qual é|como funciona)\s+",
+    )
+
+    consulta = texto
+    houve_mudanca = True
+    while houve_mudanca and consulta:
+        houve_mudanca = False
+        for padrao in padroes:
+            novo = re.sub(padrao, "", consulta, flags=re.IGNORECASE).strip(" :,-?")
+            if novo != consulta:
+                consulta = novo
+                houve_mudanca = True
+                break
+
+    return _consulta_base(consulta.strip(" ?")) if consulta else ""
+
+
+def mensagem_vale_pesquisa_web(mensagem: str) -> bool:
+    texto = _normalizar_ascii(_limpar(mensagem))
+    if not texto:
+        return False
+
+    if texto.startswith("/") and not texto.startswith("/google "):
+        return False
+
+    bloqueios_exatos = {
+        "oi",
+        "ola",
+        "olá",
+        "e ai",
+        "e aí",
+        "tudo bem",
+        "obrigado",
+        "obrigada",
+        "valeu",
+        "tchau",
+        "ate logo",
+        "até logo",
+        "ajuda",
+        "help",
+    }
+    if texto in {_normalizar_ascii(item) for item in bloqueios_exatos}:
+        return False
+
+    bloqueios_trechos = (
+        "seu nome",
+        "quem voce e",
+        "quem você e",
+        "como voce esta",
+        "como você esta",
+        "que horas",
+        "qual a hora",
+        "data de hoje",
+    )
+    if any(trecho in texto for trecho in bloqueios_trechos):
+        return False
+
+    return len(re.findall(r"[a-z0-9à-ÿ]+", texto)) >= 2
+
+
+def deve_acionar_pesquisa_web(mensagem: str, modo_pesquisa: bool = False) -> bool:
+    if not mensagem_vale_pesquisa_web(mensagem):
+        return False
+
+    texto = _normalizar_ascii(_limpar(mensagem))
+    tokens = re.findall(r"[a-z0-9]+", texto)
+
+    gatilhos_explicitos = (
+        "pesquise",
+        "pesquisar",
+        "procure",
+        "procurar",
+        "buscar",
+        "busque",
+        "na internet",
+        "me explique",
+        "explique",
+        "me fale sobre",
+        "quero saber sobre",
+        "ultimas noticias",
+        "ultimas atualizacoes",
+        "atualizacoes sobre",
+        "noticias sobre",
+        "diferenca entre",
+        "compare",
+        "comparar",
+        "como funciona",
+        "o que e",
+        "quem e",
+        "qual e",
+    )
+    if any(gatilho in texto for gatilho in gatilhos_explicitos):
+        return True
+
+    interrogativos_factuais = (
+        "quem ",
+        "qual ",
+        "quais ",
+        "quando ",
+        "onde ",
+        "como ",
+        "quanto ",
+        "quantos ",
+        "quantas ",
+        "por que ",
+        "porque ",
+    )
+    if texto.startswith(interrogativos_factuais) and len(tokens) >= 3:
+        return True
+
+    if any(t in texto for t in ("hoje", "agora", "atual", "atualizado", "recente", "ultimos", "ultimas")):
+        return True
+
+    if modo_pesquisa and (("?" in (mensagem or "")) or len(tokens) >= 5):
+        return True
+
+    return False
+
+
 def _normalizar_url_resultado(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
@@ -738,20 +869,20 @@ def pesquisar_na_internet(consulta: str) -> dict:
             fontes.append("YahooFinance")
 
     if resumo_rapido:
-        secoes.append("Resumo rápido:\n" + resumo_rapido)
+        secoes.append("Resumo direto:\n" + resumo_rapido)
 
     if destaques_web:
         linhas = [f"{i}. {txt}" for i, txt in enumerate(destaques_web[:4], start=1)]
-        secoes.append("Resultados principais:\n" + "\n".join(linhas))
+        secoes.append("Pontos principais:\n" + "\n".join(linhas))
 
     if secao_programacao:
-        secoes.append("Programação:\n" + "\n".join(f"- {x}" for x in secao_programacao[:4]))
+        secoes.append("Contexto técnico:\n" + "\n".join(f"- {x}" for x in secao_programacao[:4]))
 
     if secao_musica:
-        secoes.append("Música:\n" + "\n".join(f"- {x}" for x in secao_musica[:4]))
+        secoes.append("Referências de música:\n" + "\n".join(f"- {x}" for x in secao_musica[:4]))
 
     if secao_financas:
-        secoes.append("Finanças:\n" + "\n".join(f"- {x}" for x in secao_financas[:4]))
+        secoes.append("Panorama financeiro:\n" + "\n".join(f"- {x}" for x in secao_financas[:4]))
 
     if not secoes:
         return {
@@ -770,6 +901,7 @@ def pesquisar_na_internet(consulta: str) -> dict:
 
     return {
         "ok": True,
+        "consulta": consulta_base,
         "resumo": resumo,
         "fontes": fontes[:12],
         "links": links[:8],
@@ -784,17 +916,23 @@ def formatar_resposta_pesquisa(resultado: dict, max_fontes: int = 6, max_links: 
     if not resumo:
         return "Não consegui encontrar um resumo agora."
 
-    partes = [resumo]
+    consulta = _limpar(str(resultado.get("consulta", "")))
+    if consulta:
+        abertura = f"Pesquisei sobre {consulta} e organizei o que encontrei de forma direta:"
+    else:
+        abertura = "Pesquisei agora e organizei o que encontrei de forma direta:"
+
+    partes = [abertura, resumo]
 
     fontes_raw = resultado.get("fontes", [])
     fontes = _dedupe_ordem([str(x) for x in fontes_raw if str(x).strip()])[: max(1, max_fontes)]
     if fontes:
-        partes.append("Fontes:\n" + "\n".join(f"- {f}" for f in fontes))
+        partes.append("Fontes consultadas:\n" + "\n".join(f"- {f}" for f in fontes))
 
     links_raw = resultado.get("links", [])
     links = _dedupe_ordem([str(x) for x in links_raw if str(x).strip()])[: max(1, max_links)]
     if links:
-        partes.append("Links úteis:\n" + "\n".join(f"{i}. {u}" for i, u in enumerate(links, start=1)))
+        partes.append("Se quiser se aprofundar:\n" + "\n".join(f"{i}. {u}" for i, u in enumerate(links, start=1)))
 
     texto = "\n\n".join(p for p in partes if p.strip())
     texto = re.sub(r"\n{3,}", "\n\n", texto).strip()

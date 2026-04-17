@@ -461,12 +461,16 @@ def resposta_desconhecida_mais_humana(msg):
             "Quase entendi sua pergunta, mas ainda ficou um pouco vaga para mim. Pode reformular de outro jeito?",
             "Não peguei totalmente o que você quis perguntar. Se quiser, tenta escrever com outras palavras.",
             "Ainda não consegui entender essa pergunta por completo. Pode me dar mais contexto?",
+            "Entendi o tema por alto, mas ainda não o suficiente para te responder bem. Se quiser, detalha um pouco mais.",
+            "Sua pergunta parece interessante, só que ainda ficou ampla para mim. Se puder, recorta melhor o assunto.",
         ]
     else:
         opcoes = [
             "Não entendi totalmente o que você quis dizer, mas se quiser eu tento de novo com outra forma de pergunta.",
             "Sua mensagem ficou um pouco aberta para mim. Pode repetir como se estivesse falando comigo naturalmente?",
             "Ainda não peguei essa ideia por completo. Se quiser, tenta escrever de um jeito mais direto e eu acompanho.",
+            "Acho que faltou um pedacinho de contexto para eu te acompanhar bem. Se quiser, manda de novo mais direto.",
+            "Estou quase junto com o que você quis dizer, mas ainda não fechei a interpretação. Tenta reformular para mim.",
         ]
 
     return random.choice(opcoes)

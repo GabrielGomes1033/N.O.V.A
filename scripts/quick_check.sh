@@ -11,7 +11,7 @@ for arg in "$@"; do
       ;;
     -h|--help)
       echo "Uso: scripts/quick_check.sh [--tests]"
-      echo "  --tests  Também roda flutter test."
+      echo "  --tests  Também roda testes do backend e flutter test."
       exit 0
       ;;
     *)
@@ -31,7 +31,12 @@ cd "${ROOT_DIR}/frontend_flutter"
 flutter analyze
 
 if [[ "${RUN_TESTS}" -eq 1 ]]; then
-  echo "[extra] Rodando testes do frontend..."
+  echo "[extra 1/2] Rodando testes do backend..."
+  cd "${ROOT_DIR}"
+  python3 -m unittest discover -s backend_python/tests -q
+
+  echo "[extra 2/2] Rodando testes do frontend..."
+  cd "${ROOT_DIR}/frontend_flutter"
   flutter test
 fi
 

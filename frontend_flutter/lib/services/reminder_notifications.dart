@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+
+import 'platform_capabilities.dart';
 
 class ReminderNotificationsService {
   static final ReminderNotificationsService _instance =
@@ -13,28 +16,67 @@ class ReminderNotificationsService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
+  bool _available = true;
 
   Future<void> init() async {
-    if (_initialized) return;
+    if (_initialized || !_available) return;
+    if (!PlatformCapabilities.supportsNotifications || kIsWeb) {
+      _available = false;
+      return;
+    }
 
-    tz.initializeTimeZones();
+    try {
+      tz.initializeTimeZones();
 
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
-    await _plugin.initialize(initSettings);
+      const androidSettings =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      const darwinSettings = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+      const initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
+      );
+      await _plugin.initialize(initSettings);
 
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+      if (PlatformCapabilities.isAndroid) {
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
 
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestExactAlarmsPermission();
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestExactAlarmsPermission();
+      }
 
-    _initialized = true;
+      if (PlatformCapabilities.isIOS || PlatformCapabilities.isMacOS) {
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+                IOSFlutterLocalNotificationsPlugin>()
+            ?.requestPermissions(
+              alert: true,
+              badge: true,
+              sound: true,
+            );
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+                MacOSFlutterLocalNotificationsPlugin>()
+            ?.requestPermissions(
+              alert: true,
+              badge: true,
+              sound: true,
+            );
+      }
+
+      _initialized = true;
+    } catch (_) {
+      _available = false;
+    }
   }
 
   Future<void> scheduleReminder({
@@ -44,6 +86,7 @@ class ReminderNotificationsService {
     required DateTime when,
   }) async {
     await init();
+    if (!_initialized) return;
 
     final now = DateTime.now();
     if (!when.isAfter(now)) {

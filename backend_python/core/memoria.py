@@ -14,6 +14,7 @@ MEMORIA_PADRAO = {
     "nome_usuario": "",
     "idioma_preferido": "pt",
     "tratamento": "",
+    "modo_pesquisa": False,
     "topicos_favoritos": [],
     "objetivos_recentes": [],
     "ultima_interacao": "",
@@ -122,6 +123,7 @@ def formatar_memoria_usuario(memoria):
     idioma = idioma_legivel(memoria.get("idioma_preferido", "pt"))
     tratamento = memoria.get("tratamento") or "padrão"
     topicos = ", ".join(memoria.get("topicos_favoritos", [])) or "nenhum"
+    modo_pesquisa = "ativo" if memoria.get("modo_pesquisa") else "desativado"
     objetivos = memoria.get("objetivos_recentes", [])
     ultimo_objetivo = objetivos[-1] if objetivos else "nenhum"
     ultima_interacao = memoria.get("ultima_interacao") or "não registrada"
@@ -130,6 +132,7 @@ def formatar_memoria_usuario(memoria):
         f"Nome: {nome}\n"
         f"Idioma preferido: {idioma}\n"
         f"Tratamento: {tratamento}\n"
+        f"Modo pesquisa: {modo_pesquisa}\n"
         f"Tópicos favoritos: {topicos}\n"
         f"Último objetivo: {ultimo_objetivo}\n"
         f"Última interação: {ultima_interacao}\n"

@@ -73,7 +73,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'log_consciencia': <dynamic>[],
   };
 
-  // ignore: unused_field
   String _systemStatus = 'Conectando...';
   bool _speechReady = false;
   bool _isListening = false;
@@ -192,7 +191,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (!Platform.isAndroid) return;
+    if (!PlatformCapabilities.isAndroid) return;
 
     if (state == AppLifecycleState.resumed) {
       BackgroundWakeService.stop();
@@ -330,6 +329,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadMusicLibrary() async {
+    if (!PlatformCapabilities.supportsLocalMusicLibrary) {
+      if (!mounted) return;
+      setState(() => _musicLibrary = []);
+      return;
+    }
     try {
       final items = await _localDb.getMusicLibrary();
       if (!mounted) return;
@@ -919,6 +923,122 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         t.contains('toque a playlist favorita dela');
   }
 
+  bool _isYoutubeOpenCommand(String input) {
+    final t = _normalizarParaMatch(input);
+    return t == 'abrir youtube' ||
+        t == 'abre youtube' ||
+        t == 'open youtube' ||
+        t == 'abrir o youtube';
+  }
+
+  bool _isMapsOpenCommand(String input) {
+    final t = _normalizarParaMatch(input);
+    return t == 'abrir maps' ||
+        t == 'abre maps' ||
+        t == 'open maps' ||
+        t == 'abrir o maps' ||
+        t == 'abrir mapa' ||
+        t == 'abrir mapas' ||
+        t == 'abrir google maps' ||
+        t == 'abre google maps';
+  }
+
+  String? _extractYoutubeSearchQuery(String input) {
+    final cleaned = input.trim();
+    if (cleaned.isEmpty) return null;
+
+    final patterns = <RegExp>[
+      RegExp(
+        r'^(?:pesquise|pesquisar|procure|procurar|busque|buscar)\s+(?:no\s+)?youtube\s+(?:por|sobre)?\s*(.+)$',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'^(?:abra|abrir|abre|open)\s+(?:o\s+)?youtube\s+(?:e\s+)?(?:pesquise|pesquisar|procure|procurar|busque|buscar)?\s*(?:por|sobre)?\s*(.+)$',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'^(?:youtube)\s+(?:pesquise|pesquisar|procure|procurar|busque|buscar)?\s*(?:por|sobre)?\s*(.+)$',
+        caseSensitive: false,
+      ),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match == null) continue;
+      final query = (match.group(1) ?? '').trim();
+      if (query.isEmpty) continue;
+      return query.trim().replaceAll(RegExp(r'^[,:-]+|[,:-]+$'), '').trim();
+    }
+
+    return null;
+  }
+
+  String? _extractMapsSearchQuery(String input) {
+    final cleaned = input.trim();
+    if (cleaned.isEmpty) return null;
+
+    final patterns = <RegExp>[
+      RegExp(
+        r'^(?:pesquise|pesquisar|procure|procurar|busque|buscar)\s+(?:no\s+)?(?:google\s+)?maps?\s+(?:por|sobre|em)?\s*(.+)$',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'^(?:abra|abrir|abre|open)\s+(?:o\s+)?(?:google\s+)?maps?\s+(?:e\s+)?(?:pesquise|pesquisar|procure|procurar|busque|buscar)?\s*(?:por|sobre|em)?\s*(.+)$',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'^(?:mapa|mapas|maps|google maps)\s+(?:pesquise|pesquisar|procure|procurar|busque|buscar)?\s*(?:por|sobre|em)?\s*(.+)$',
+        caseSensitive: false,
+      ),
+    ];
+
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match == null) continue;
+      final query = (match.group(1) ?? '').trim();
+      if (query.isEmpty) continue;
+      return query.trim().replaceAll(RegExp(r'^[,:-]+|[,:-]+$'), '').trim();
+    }
+
+    return null;
+  }
+
+  Future<String> _abrirYoutube([String query = '']) async {
+    final normalizedQuery = query.trim();
+    final uri = normalizedQuery.isEmpty
+        ? Uri.parse('https://www.youtube.com')
+        : Uri.https('www.youtube.com', '/results', {
+            'search_query': normalizedQuery,
+          });
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok) {
+      return normalizedQuery.isEmpty
+          ? 'Não consegui abrir o YouTube agora.'
+          : 'Não consegui abrir a pesquisa no YouTube agora.';
+    }
+    return normalizedQuery.isEmpty
+        ? 'Abrindo o YouTube.'
+        : 'Abrindo pesquisa no YouTube por "$normalizedQuery".';
+  }
+
+  Future<String> _abrirMaps([String query = '']) async {
+    final normalizedQuery = query.trim();
+    final uri = normalizedQuery.isEmpty
+        ? Uri.parse('https://www.google.com/maps')
+        : Uri.parse(
+            'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(normalizedQuery)}',
+          );
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok) {
+      return normalizedQuery.isEmpty
+          ? 'Não consegui abrir o Maps agora.'
+          : 'Não consegui abrir a busca no Maps agora.';
+    }
+    return normalizedQuery.isEmpty
+        ? 'Abrindo o Maps.'
+        : 'Abrindo busca no Maps por "$normalizedQuery".';
+  }
+
   Future<String> _abrirPlaylistFavoritaYoutube() async {
     const url =
         'https://youtube.com/playlist?list=PLR5Cmjo90BNguiSb2wDShPdKoa-Xiw5x1&si=ZsqnYwcp7fkvUj35';
@@ -931,6 +1051,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<String> _adicionarMusicasNaBiblioteca() async {
+    if (!PlatformCapabilities.supportsLocalMusicLibrary) {
+      return 'Biblioteca local de músicas não está disponível nesta plataforma.';
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'],
@@ -954,6 +1078,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<String> _tocarMusicaLocal([String query = '']) async {
+    if (!PlatformCapabilities.supportsLocalMusicLibrary) {
+      return 'A reprodução local de músicas só está disponível fora da Web.';
+    }
+
     if (_musicLibrary.isEmpty) {
       final added = await _adicionarMusicasNaBiblioteca();
       if (_musicLibrary.isEmpty) return added;
@@ -981,6 +1109,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   String _listarMusicas() {
+    if (!PlatformCapabilities.supportsLocalMusicLibrary) {
+      return 'A biblioteca local de músicas não está disponível nesta plataforma.';
+    }
     if (_musicLibrary.isEmpty) return 'Sua biblioteca de músicas está vazia.';
     final itens = _musicLibrary.take(20).toList();
     final linhas = <String>[];
@@ -1090,6 +1221,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return ok
           ? 'Abrindo Termux em modo de segurança defensiva.'
           : 'Não consegui abrir o Termux agora.';
+    }
+    final mapsQuery = _extractMapsSearchQuery(message);
+    if (mapsQuery != null) {
+      return _abrirMaps(mapsQuery);
+    }
+    if (_isMapsOpenCommand(message)) {
+      return _abrirMaps();
+    }
+    final youtubeQuery = _extractYoutubeSearchQuery(message);
+    if (youtubeQuery != null) {
+      return _abrirYoutube(youtubeQuery);
+    }
+    if (_isYoutubeOpenCommand(message)) {
+      return _abrirYoutube();
     }
     if (_isPlaylistFavoritaCommand(message)) {
       return _abrirPlaylistFavoritaYoutube();
@@ -1914,6 +2059,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               'desc': 'Status de software e segurança.'
             },
             {'cmd': '/rag <pergunta>', 'desc': 'Consulta base RAG.'},
+            {
+              'cmd': 'pesquise no Maps por ...',
+              'desc': 'Atalho local por voz/texto para abrir busca no Maps.'
+            },
+            {
+              'cmd': 'pesquise no YouTube por ...',
+              'desc': 'Atalho local por voz/texto para abrir busca no YouTube.'
+            },
             {'cmd': '/lembrar ...', 'desc': 'Cria lembrete com data/hora.'},
           ];
         });

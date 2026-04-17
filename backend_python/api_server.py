@@ -143,6 +143,7 @@ def _novo_contexto():
         "nome_usuario": memoria.get("nome_usuario", ""),
         "idioma_preferido": memoria.get("idioma_preferido", "pt"),
         "tratamento": memoria.get("tratamento", ""),
+        "modo_pesquisa": bool(memoria.get("modo_pesquisa", False)),
         "ultima_intencao": "",
         "confirmacao_pendente": None,
         "rotina_pendente": None,
@@ -160,6 +161,7 @@ def sincronizar_memoria():
     memoria["nome_usuario"] = CONTEXTO.get("nome_usuario", "")
     memoria["idioma_preferido"] = CONTEXTO.get("idioma_preferido", "pt")
     memoria["tratamento"] = CONTEXTO.get("tratamento", "")
+    memoria["modo_pesquisa"] = bool(CONTEXTO.get("modo_pesquisa", False))
     salvar_memoria_usuario(memoria)
 
 
@@ -469,6 +471,38 @@ def processar_mensagem(user):
 
     if user_l in {"/help", "help", "ajuda", "menu help", "comandos", "o que voce faz", "o que você faz"}:
         return ret(ajuda_texto_humano(), evento="help")
+
+    if user_l in {
+        "/modo pesquisa",
+        "modo pesquisa",
+        "ativar modo pesquisa",
+        "ligar modo pesquisa",
+        "pesquisa ligada",
+        "ativar pesquisa",
+    }:
+        CONTEXTO["modo_pesquisa"] = True
+        sincronizar_memoria()
+        return ret(
+            "Modo pesquisa ativado. A partir de agora eu vou priorizar busca na web para perguntas abertas, "
+            "explicações, comparações e assuntos atuais. Se quiser voltar ao chat normal, diga '/modo conversa'.",
+            evento="search_mode_on",
+        )
+
+    if user_l in {
+        "/modo conversa",
+        "/modo normal",
+        "modo conversa",
+        "desativar modo pesquisa",
+        "desligar modo pesquisa",
+        "pesquisa desligada",
+        "sair do modo pesquisa",
+    }:
+        CONTEXTO["modo_pesquisa"] = False
+        sincronizar_memoria()
+        return ret(
+            "Modo pesquisa desativado. Voltei ao fluxo normal de conversa, usando pesquisa só quando você pedir ou quando fizer sentido claro.",
+            evento="search_mode_off",
+        )
 
     if any(k in user_l for k in ["quem voce e", "quem você é", "o que voce e", "o que você é"]):
         return ret(
@@ -828,7 +862,7 @@ def processar_mensagem(user):
         return ret(str(payload), ok=False, evento=f"{provider_usado}_project")
 
     # Orquestrador inteligente automático para perguntas mais livres.
-    orquestrado = orquestrar_consulta(user)
+    orquestrado = orquestrar_consulta(user, contexto=CONTEXTO)
     if isinstance(orquestrado, dict) and orquestrado.get("resposta"):
         return ret(str(orquestrado.get("resposta")), evento="orchestrator")
 

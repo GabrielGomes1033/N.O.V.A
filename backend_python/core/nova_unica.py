@@ -8,6 +8,8 @@ from core.assistente_plus import (
     calcular_expressao,
     consultar_clima,
     cotacoes_financeiras,
+    deve_acionar_pesquisa_web,
+    extrair_consulta_pesquisa_web,
     formatar_cotacoes_humanas,
     formatar_resposta_pesquisa,
     listar_lembretes,
@@ -414,22 +416,29 @@ def _resposta_ciberseguranca_defensiva(msg: str) -> str | None:
     return "\n".join(linhas)
 
 
-def orquestrar_consulta(mensagem: str) -> dict | None:
+def orquestrar_consulta(mensagem: str, contexto: dict | None = None) -> dict | None:
+    contexto = contexto or {}
     msg = (mensagem or "").strip()
     if not msg:
         return None
     l = msg.lower()
+    modo_pesquisa = bool(contexto.get("modo_pesquisa"))
 
     # Cálculo
     if l.startswith("/calcular") or l.startswith("calcule") or l.startswith("quanto e") or l.startswith("quanto é"):
         expr = re.sub(r"^(\/calcular|calcule|quanto e|quanto é)", "", msg, flags=re.IGNORECASE).strip(" =:")
         calc = calcular_expressao(expr)
-    if calc.get("ok"):
-        return {"resposta": f"Resultado: {calc.get('resultado')}"}
-    web = pesquisar_na_internet(f"como resolver: {expr}")
-    if web.get("ok"):
-        return {"resposta": "Fiquei em dúvida no cálculo, então consultei a web para validar:\n" + formatar_resposta_pesquisa(web)}
-    return {"resposta": "Tive dúvida nesse cálculo. Pode me ensinar esse padrão com /ensinar pergunta = resposta."}
+        if calc.get("ok"):
+            return {"resposta": f"Resultado: {calc.get('resultado')}"}
+        web = pesquisar_na_internet(f"como resolver: {expr}")
+        if web.get("ok"):
+            return {
+                "resposta": "Fiquei em dúvida no cálculo, então consultei a web para validar:\n"
+                + formatar_resposta_pesquisa(web)
+            }
+        return {
+            "resposta": "Tive dúvida nesse cálculo. Pode me ensinar esse padrão com /ensinar pergunta = resposta."
+        }
 
     # Mercado
     if any(k in l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado"]):
@@ -464,13 +473,20 @@ def orquestrar_consulta(mensagem: str) -> dict | None:
         return {"resposta": ciber}
 
     # Pesquisa inteligente (web)
-    if any(k in l for k in ["pesquise", "procure", "buscar", "o que e", "o que é", "explique", "me fale sobre"]):
-        consulta = re.sub(r"^(pesquise|procure|buscar|busque|o que e|o que é|explique|me fale sobre)", "", msg, flags=re.IGNORECASE).strip(" :,-")
+    if deve_acionar_pesquisa_web(msg, modo_pesquisa=modo_pesquisa):
+        consulta = extrair_consulta_pesquisa_web(msg)
         if len(consulta) >= 3:
             pesquisa = pesquisar_na_internet(consulta)
             if pesquisa.get("ok"):
                 return {"resposta": formatar_resposta_pesquisa(pesquisa)}
-            return {"resposta": "Não achei fontes confiáveis agora. Se quiser, me ensine essa resposta para eu aprender."}
+            if modo_pesquisa:
+                return {
+                    "resposta": "Estou com o modo pesquisa ativo, mas não achei fontes boas para essa pergunta agora. "
+                    "Se quiser, reformule o tema ou peça um recorte mais específico."
+                }
+            return {
+                "resposta": "Não achei fontes confiáveis agora. Se quiser, me ensine essa resposta para eu aprender."
+            }
 
     return None
 

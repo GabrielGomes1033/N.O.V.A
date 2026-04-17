@@ -1,27 +1,36 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 class PlatformCapabilities {
-  static bool get isAndroid => Platform.isAndroid;
-  static bool get isIOS => Platform.isIOS;
-  static bool get isDesktop =>
-      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  static bool get isWeb => kIsWeb;
+  static bool get isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  static bool get isIOS =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  static bool get isWindows =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  static bool get isLinux =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
+  static bool get isMacOS =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+  static bool get isDesktop => isWindows || isLinux || isMacOS;
 
   static bool get supportsBackgroundWake => isAndroid;
   static bool get supportsWakeInForeground => true;
-  static bool get supportsLocalMusicLibrary => true;
-  static bool get supportsNotifications => isAndroid || isIOS;
+  static bool get supportsLocalMusicLibrary => !isWeb;
+  static bool get supportsNotifications => isAndroid || isIOS || isMacOS;
   static bool get supportsDriveAndMarket => true;
-  static bool get supportsBluetoothConnect => isAndroid || isIOS;
+  static bool get supportsBluetoothConnect => isAndroid;
   static bool get supportsCastScreen => isAndroid;
   static bool get supportsAndroidAuto => isAndroid;
   static bool get supportsTermuxIntegration => isAndroid;
 
   static String get platformName {
-    if (Platform.isAndroid) return 'Android';
-    if (Platform.isIOS) return 'iOS';
-    if (Platform.isWindows) return 'Windows';
-    if (Platform.isLinux) return 'Linux';
-    if (Platform.isMacOS) return 'macOS';
+    if (isWeb) return 'Web';
+    if (isAndroid) return 'Android';
+    if (isIOS) return 'iOS';
+    if (isWindows) return 'Windows';
+    if (isLinux) return 'Linux';
+    if (isMacOS) return 'macOS';
     return 'Desconhecido';
   }
 

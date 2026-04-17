@@ -14,6 +14,10 @@ def ajuda_topicos() -> dict[str, Any]:
         {"cmd": "/rag reindex [arquivos]", "desc": "Reindexa base RAG local."},
         {"cmd": "/rag <pergunta>", "desc": "Consulta base RAG com fontes."},
         {"cmd": "/google <consulta>", "desc": "Pesquisa na internet e resume."},
+        {"cmd": "pesquise no Maps por <lugar>", "desc": "Atalho local do app para abrir busca gratuita no Maps, sem SDK pago."},
+        {"cmd": "pesquise no YouTube por <tema>", "desc": "Atalho local do app para abrir busca no YouTube."},
+        {"cmd": "/modo pesquisa", "desc": "Opcional: força pesquisa web assistida de forma mais agressiva."},
+        {"cmd": "/modo conversa", "desc": "Opcional: reduz a priorização automática de pesquisa e volta ao chat mais conversacional."},
         {"cmd": "/lembrar <texto> <data/hora>", "desc": "Cria lembrete com data/hora."},
         {"cmd": "/lembretes", "desc": "Lista lembretes ativos."},
         {"cmd": "/calcular <expressao>", "desc": "Executa cálculo."},
@@ -31,11 +35,11 @@ def ajuda_topicos() -> dict[str, Any]:
         },
         {
             "topic": "Voz e Interface",
-            "text": "Possui modo escuta, push-to-talk, wake word e painel admin responsivo.",
+            "text": "Possui modo escuta, push-to-talk, wake word, painel admin responsivo e atalhos locais para abrir YouTube e Maps por voz.",
         },
         {
             "topic": "Conhecimento e Aprendizado",
-            "text": "Aprende por conversa, por documentos anexados (automático) e por RAG local com fontes.",
+            "text": "Aprende por conversa, por documentos anexados (automático), por RAG local com fontes e agora pesquisa automaticamente na web quando a pergunta pede contexto factual.",
         },
         {
             "topic": "Autonomia e Segurança",
@@ -55,6 +59,7 @@ def ajuda_texto_humano() -> str:
         "Help da NOVA:",
         "Eu sou a NOVA, uma assistente de IA com memória, voz, RAG, automações seguras e modo autônomo controlado.",
         "Você também pode pedir por voz ou texto algo como 'Nova, crie um novo projeto chamado Atlas'.",
+        "Perguntas factuais como 'quem descobriu o Brasil' ou 'como funciona MCP' já podem disparar pesquisa web automaticamente.",
         "",
         "Tópicos principais:",
     ]

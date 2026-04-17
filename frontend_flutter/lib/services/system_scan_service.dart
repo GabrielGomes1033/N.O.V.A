@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:battery_plus/battery_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -24,9 +22,10 @@ class SystemScanService {
 
     final adminGuard = config['admin_guard'] == true;
     final allowVoiceOnLock = config['allow_voice_on_lock'] != false;
-    final wakeWord = (config['wake_word']?.toString().trim().isNotEmpty ?? false)
-        ? config['wake_word'].toString().trim()
-        : 'nova';
+    final wakeWord =
+        (config['wake_word']?.toString().trim().isNotEmpty ?? false)
+            ? config['wake_word'].toString().trim()
+            : 'nova';
 
     final linhas = <String>[
       'Varredura detalhada (software + hardware):',
@@ -35,7 +34,6 @@ class SystemScanService {
       '- App: $appInfo',
       '- Dispositivo: $deviceInfo',
       '- Bateria: $batteryInfo',
-      '- Processadores lógicos: ${Platform.numberOfProcessors}',
       '- Wake word: "$wakeWord"',
       '- Monitor em segundo plano: ${PlatformCapabilities.supportsBackgroundWake ? 'suportado' : 'limitado'}',
       '- Comando por voz com tela bloqueada: ${allowVoiceOnLock ? 'ativado' : 'desativado'}',
@@ -85,7 +83,16 @@ class SystemScanService {
 
   Future<String> _deviceInfoHuman() async {
     try {
-      if (Platform.isAndroid) {
+      if (PlatformCapabilities.isWeb) {
+        final w = await _deviceInfo.webBrowserInfo;
+        final browser = w.browserName.name;
+        final platform = (w.platform ?? 'web').trim();
+        final vendor = (w.vendor ?? '').trim();
+        final base = '$browser · ${platform.isEmpty ? 'web' : platform}';
+        return vendor.isEmpty ? base : '$base · $vendor';
+      }
+
+      if (PlatformCapabilities.isAndroid) {
         final a = await _deviceInfo.androidInfo;
         final fabricante = a.manufacturer;
         final modelo = a.model;
@@ -96,7 +103,7 @@ class SystemScanService {
         return '$fabricante $modelo · Android $versao (SDK $sdk) · patch $patch · $fisico';
       }
 
-      if (Platform.isIOS) {
+      if (PlatformCapabilities.isIOS) {
         final i = await _deviceInfo.iosInfo;
         final nome = i.name;
         final modelo = i.model;
@@ -105,17 +112,17 @@ class SystemScanService {
         return '$nome $modelo · iOS $versao · $fisico';
       }
 
-      if (Platform.isWindows) {
+      if (PlatformCapabilities.isWindows) {
         final w = await _deviceInfo.windowsInfo;
         return '${w.computerName} · Windows ${w.displayVersion}';
       }
 
-      if (Platform.isLinux) {
+      if (PlatformCapabilities.isLinux) {
         final l = await _deviceInfo.linuxInfo;
         return '${l.name} ${l.version ?? ''}'.trim();
       }
 
-      if (Platform.isMacOS) {
+      if (PlatformCapabilities.isMacOS) {
         final m = await _deviceInfo.macOsInfo;
         return '${m.model} · macOS ${m.osRelease}';
       }
