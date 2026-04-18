@@ -25,6 +25,12 @@ class SearchModeTests(unittest.TestCase):
         )
         self.assertEqual(consulta, "o protocolo MCP")
 
+    def test_extrai_consulta_dirigida_para_wikipedia(self) -> None:
+        consulta = extrair_consulta_pesquisa_web(
+            "pesquise no Wikipedia LLM"
+        )
+        self.assertEqual(consulta, "LLM wikipedia")
+
     def test_detecta_pedido_de_pesquisa_por_atualidade(self) -> None:
         self.assertTrue(
             deve_acionar_pesquisa_web(

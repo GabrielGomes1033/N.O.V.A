@@ -264,6 +264,11 @@ class NovaWorkspaceRail extends StatelessWidget {
     required this.autonomyEnabled,
     required this.continuousWake,
     required this.examples,
+    required this.jarvisMode,
+    required this.toolsTotal,
+    required this.memoryItems,
+    required this.toolNames,
+    required this.voicePhase,
     this.compressed = false,
   });
 
@@ -276,6 +281,11 @@ class NovaWorkspaceRail extends StatelessWidget {
   final bool autonomyEnabled;
   final bool continuousWake;
   final List<String> examples;
+  final String jarvisMode;
+  final int toolsTotal;
+  final List<String> memoryItems;
+  final List<String> toolNames;
+  final String voicePhase;
   final bool compressed;
 
   @override
@@ -423,6 +433,102 @@ class NovaWorkspaceRail extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+            SizedBox(height: gap),
+            _NovaRailCard(
+              title: 'Cerebro JARVIS',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    jarvisMode,
+                    style: const TextStyle(
+                      color: Color(0xFFF3F8FF),
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _NovaSignalChip(
+                        label: '$toolsTotal tools prontas',
+                        active: toolsTotal > 0,
+                      ),
+                      _NovaSignalChip(
+                        label:
+                            'Memoria ${memoryItems.isEmpty ? 'vazia' : 'ativa'}',
+                        active: memoryItems.isNotEmpty,
+                      ),
+                      _NovaSignalChip(
+                        label: 'Voz $voicePhase',
+                        active: voicePhase.toLowerCase() != 'off',
+                      ),
+                    ],
+                  ),
+                  if (toolNames.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      toolNames.take(4).join(' • '),
+                      style: const TextStyle(
+                        color: Color(0xFFA5B8C6),
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(height: gap),
+            _NovaRailCard(
+              title: 'Memoria Viva',
+              child: memoryItems.isEmpty
+                  ? const Text(
+                      'A memoria recente ainda esta vazia. Conforme o chat evolui, a NOVA passa a guardar contexto util aqui.',
+                      style: TextStyle(
+                        color: Color(0xFFA5B8C6),
+                        fontSize: 13.5,
+                        height: 1.45,
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: memoryItems
+                          .take(4)
+                          .map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 4),
+                                    child: Icon(
+                                      Icons.memory_rounded,
+                                      size: 16,
+                                      color: Color(0xFF4BCFFF),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      item,
+                                      style: const TextStyle(
+                                        color: Color(0xFFD8EAF7),
+                                        fontSize: 13.5,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
             ),
             SizedBox(height: gap),
             _NovaRailCard(

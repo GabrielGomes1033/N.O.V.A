@@ -240,6 +240,39 @@ def _consulta_base(consulta: str) -> str:
     return c or (consulta or "").strip()
 
 
+def _normalizar_consulta_dirigida(consulta: str) -> str:
+    c = _limpar(consulta)
+    if not c:
+        return ""
+
+    padroes = (
+        (
+            r"^(?:na|no|em)\s+wikipedia\s+(?:sobre\s+)?(.+)$",
+            lambda m: f"{m.group(1).strip()} wikipedia",
+        ),
+        (
+            r"^wikipedia\s+(?:sobre\s+)?(.+)$",
+            lambda m: f"{m.group(1).strip()} wikipedia",
+        ),
+        (
+            r"^(.+?)\s+(?:na|no|em)\s+wikipedia$",
+            lambda m: f"{m.group(1).strip()} wikipedia",
+        ),
+        (
+            r"^(?:na|no|em)\s+(?:internet|web)\s+(?:sobre\s+)?(.+)$",
+            lambda m: m.group(1).strip(),
+        ),
+    )
+
+    for padrao, formatador in padroes:
+        match = re.match(padrao, c, flags=re.IGNORECASE)
+        if match:
+            c = formatador(match).strip()
+            break
+
+    return c.strip(" :,-?")
+
+
 def extrair_consulta_pesquisa_web(mensagem: str) -> str:
     texto = _limpar((mensagem or "").strip(" \n\t"))
     if not texto:
@@ -266,7 +299,7 @@ def extrair_consulta_pesquisa_web(mensagem: str) -> str:
                 houve_mudanca = True
                 break
 
-    return _consulta_base(consulta.strip(" ?")) if consulta else ""
+    return _consulta_base(_normalizar_consulta_dirigida(consulta.strip(" ?"))) if consulta else ""
 
 
 def mensagem_vale_pesquisa_web(mensagem: str) -> bool:

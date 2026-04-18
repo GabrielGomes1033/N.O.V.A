@@ -1,8 +1,13 @@
 from datetime import datetime
 import traceback
 from pathlib import Path
+import sys
 from urllib.parse import quote_plus
 import webbrowser
+
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 # =========================
 # LOG DE ERRO
@@ -155,6 +160,22 @@ try:
 except Exception as e:
     registrar_erro(e)
 
+try:
+    from api.app import create_app
+
+    app = create_app()
+except Exception:
+    app = None
+
+try:
+    from core.jarvis_chat_bridge import process_pending_tool_confirmation, try_jarvis_tool_flow
+except Exception:
+    def process_pending_tool_confirmation(texto, contexto=None, mode="normal"):
+        return None
+
+    def try_jarvis_tool_flow(texto, contexto=None, mode="normal"):
+        return None
+
 # Migração automática para camada segura de persistência.
 try:
     carregar_memoria_usuario()
@@ -174,6 +195,7 @@ contexto = {
     "tratamento": memoria_inicial.get("tratamento", ""),
     "ultima_intencao": "",
     "confirmacao_pendente": None,
+    "jarvis_tool_pending": None,
     "admin_autenticado": False,
     "admin_usuario": "",
 }
@@ -477,6 +499,13 @@ def main():
                 registrar_interacao_usuario(user, resposta_confirmacao)
                 continue
 
+        tool_confirmacao = process_pending_tool_confirmation(user, contexto, mode="normal")
+        if isinstance(tool_confirmacao, dict) and tool_confirmacao.get("handled"):
+            resposta = str(tool_confirmacao.get("reply", ""))
+            print("NOVA:", resposta)
+            registrar_interacao_usuario(user, resposta)
+            continue
+
         if user.lower() == "sair":
             sincronizar_memoria()
             print("NOVA: Até mais! 👋")
@@ -520,6 +549,13 @@ def main():
         if nome:
             contexto["nome_usuario"] = nome
             sincronizar_memoria()
+
+        jarvis_tool = try_jarvis_tool_flow(user, contexto, mode="normal")
+        if isinstance(jarvis_tool, dict) and jarvis_tool.get("reply"):
+            resposta = str(jarvis_tool.get("reply", ""))
+            print("NOVA:", resposta)
+            registrar_interacao_usuario(user, resposta)
+            continue
 
         intencao = detectar_intencao(user, contexto)
         contexto["ultima_intencao"] = intencao

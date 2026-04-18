@@ -4,11 +4,14 @@ cryptography>=44,<47
 Cython<3
 docutils==0.22.4
 edge-tts==7.2.8
+fastapi>=0.116.0,<1
 filetype==1.2.0
 google-api-python-client>=2.170.0,<3
 google-auth>=2.40.0,<3
 idna==3.11
+pydantic>=2.11.0,<3
 Pygments==2.20.0
 pyttsx3==2.98
 requests==2.33.1
 urllib3==2.6.3
+uvicorn>=0.35.0,<1

@@ -109,6 +109,8 @@ class ChatApiService {
       out.add('/documentos/analisar');
       out.add('/document/analyze');
       out.add('/docs/analyze');
+    } else if (path == '/jarvis/status') {
+      out.add('/assistant/status');
     }
 
     final seen = <String>{path};
@@ -127,11 +129,15 @@ class ChatApiService {
   }) {
     if (statusCode == 404 &&
         (path.startsWith('/autonomy') ||
+            path.startsWith('/jarvis') ||
+            path.startsWith('/actions') ||
             path.startsWith('/documents') ||
             path.startsWith('/agent') ||
             path.startsWith('/ops') ||
             path.startsWith('/help') ||
-            path.startsWith('/memory/subjects'))) {
+            path.startsWith('/memory/subjects') ||
+            path.startsWith('/memory/recent') ||
+            path.startsWith('/voice/status'))) {
       return 'Endpoint não encontrado nesse backend. '
           'A API está desatualizada para este recurso. '
           'Atualize/deploy o `backend_python/api_server.py` mais recente.';
@@ -225,9 +231,38 @@ class ChatApiService {
         );
   }
 
+  Future<Map<String, dynamic>> sendJarvisMessage(
+    String message, {
+    String userId = 'frontend',
+    String mode = 'normal',
+    bool autoApprove = false,
+  }) async {
+    try {
+      final payload = await _requestJson(
+        'POST',
+        '/chat',
+        body: {
+          'user_id': userId,
+          'text': message,
+          'mode': mode,
+          'auto_approve': autoApprove,
+        },
+      );
+      final reply = payload['reply']?.toString().trim() ?? '';
+      if (reply.isNotEmpty &&
+          reply.toLowerCase() != 'mensagem vazia.' &&
+          reply.toLowerCase() != 'mensagem vazia') {
+        return payload;
+      }
+      return _requestJson('POST', '/chat', body: {'message': message});
+    } on ApiHttpException catch (e) {
+      if (e.statusCode != 404 && e.statusCode != 400) rethrow;
+      return _requestJson('POST', '/chat', body: {'message': message});
+    }
+  }
+
   Future<String> sendMessage(String message) async {
-    final payload =
-        await _requestJson('POST', '/chat', body: {'message': message});
+    final payload = await sendJarvisMessage(message);
     return payload['reply']?.toString() ?? 'Sem resposta.';
   }
 
@@ -594,6 +629,77 @@ class ChatApiService {
   }) {
     final lim = limit.clamp(1, 50);
     return _requestJson('GET', '/memory/subjects?limit=$lim');
+  }
+
+  Future<Map<String, dynamic>> getJarvisStatus() {
+    return _requestJson('GET', '/jarvis/status');
+  }
+
+  Future<List<Map<String, dynamic>>> getRecentMemory({
+    String userId = 'frontend',
+    int limit = 8,
+  }) async {
+    final lim = limit.clamp(1, 50);
+    final payload = await _requestJson(
+      'GET',
+      '/memory/recent?user_id=${Uri.encodeComponent(userId)}&limit=$lim',
+    );
+    final items = payload['items'];
+    if (items is! List) return [];
+    return items
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> searchRecentMemory({
+    required String query,
+    String userId = 'frontend',
+    int limit = 8,
+  }) async {
+    final lim = limit.clamp(1, 50);
+    final payload = await _requestJson(
+      'GET',
+      '/memory/search?user_id=${Uri.encodeComponent(userId)}&query=${Uri.encodeComponent(query)}&limit=$lim',
+    );
+    final items = payload['items'];
+    if (items is! List) return [];
+    return items
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getJarvisTools() async {
+    final payload = await _requestJson('GET', '/actions/tools');
+    final tools = payload['tools'];
+    if (tools is! List) return [];
+    return tools
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> approveJarvisAction({
+    required String toolName,
+    required Map<String, dynamic> params,
+    String userId = 'frontend',
+    String promptText = '',
+  }) {
+    return _requestJson(
+      'POST',
+      '/actions/approve',
+      body: {
+        'user_id': userId,
+        'tool_name': toolName,
+        'params': params,
+        'prompt_text': promptText,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> getVoiceStatus() {
+    return _requestJson('GET', '/voice/status');
   }
 
   Future<Map<String, dynamic>> getHelpTopics() {

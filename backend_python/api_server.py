@@ -126,6 +126,12 @@ from core.session_audit import listar_auditoria_sessao, validar_cadeia_auditoria
 from core.ops_status import status_operacional
 from core.document_analysis import analisar_documento_base64
 from core.approval_flow import listar_aprovacoes, decidir_aprovacao
+from core.jarvis_chat_bridge import (
+    jarvis_status_snapshot,
+    process_pending_tool_confirmation,
+    try_jarvis_tool_flow,
+)
+from core.orchestrator import get_default_orchestrator
 from core.memoria_assuntos import aprender_assuntos, perfil_assuntos, dica_contextual_para_pergunta
 from core.help_center import ajuda_texto_humano, ajuda_topicos
 from routes.chat_routes import handle_chat_post
@@ -147,6 +153,7 @@ def _novo_contexto():
         "ultima_intencao": "",
         "confirmacao_pendente": None,
         "rotina_pendente": None,
+        "jarvis_tool_pending": None,
         "admin_autenticado": False,
         "admin_usuario": "",
     }
@@ -463,6 +470,10 @@ def processar_mensagem(user):
         resp_confirm = processar_confirmacao_agente(user, contexto=CONTEXTO)
         if resp_confirm:
             return ret(resp_confirm)
+
+    tool_confirm = process_pending_tool_confirmation(user, CONTEXTO, mode="normal")
+    if isinstance(tool_confirm, dict) and tool_confirm.get("handled"):
+        return ret(str(tool_confirm.get("reply", "")), evento="jarvis_tool_confirm")
 
     user_l = user.lower().strip()
 
@@ -866,6 +877,11 @@ def processar_mensagem(user):
     if isinstance(orquestrado, dict) and orquestrado.get("resposta"):
         return ret(str(orquestrado.get("resposta")), evento="orchestrator")
 
+    jarvis_tool = try_jarvis_tool_flow(user, CONTEXTO, mode="normal")
+    if isinstance(jarvis_tool, dict) and jarvis_tool.get("reply"):
+        evento = "jarvis_tool_pending" if jarvis_tool.get("approval_needed") else "jarvis_tool"
+        return ret(str(jarvis_tool.get("reply")), evento=evento)
+
     if user.startswith("/nome"):
         try:
             _, nome = user.split(" ", 1)
@@ -1141,6 +1157,10 @@ class NovaHandler(BaseHTTPRequestHandler):
                     "endpoints": [
                         "/health",
                         "/chat",
+                        "/jarvis/status",
+                        "/actions/tools",
+                        "/memory/recent",
+                        "/voice/status",
                         "/market/quotes",
                         "/weather/now",
                         "/system/status",
@@ -1152,6 +1172,48 @@ class NovaHandler(BaseHTTPRequestHandler):
             return
         if path == "/health":
             self._send_json({"ok": True, "service": "nova-api"})
+            return
+        if path == "/jarvis/status":
+            self._send_json(jarvis_status_snapshot())
+            return
+        if path == "/actions/tools":
+            self._send_json({"ok": True, "tools": get_default_orchestrator().tools.describe()})
+            return
+        if path == "/voice/status":
+            self._send_json(
+                {
+                    "ok": True,
+                    "enabled": False,
+                    "phase": "planned",
+                    "message": "Voice pipeline scaffolded; use /voice/neural for TTS and Phase 2 for live audio.",
+                }
+            )
+            return
+        if path == "/memory/recent":
+            user_id = str(query.get("user_id", ["default"])[0] or "default").strip() or "default"
+            try:
+                limit = int(query.get("limit", ["8"])[0])
+            except Exception:
+                limit = 8
+            items = get_default_orchestrator().memory.search_recent(
+                user_id=user_id,
+                limit=max(1, min(limit, 50)),
+            )
+            self._send_json({"ok": True, "items": items, "total": len(items)})
+            return
+        if path == "/memory/search":
+            user_id = str(query.get("user_id", ["default"])[0] or "default").strip() or "default"
+            search_query = str(query.get("query", [""])[0] or "").strip()
+            try:
+                limit = int(query.get("limit", ["8"])[0])
+            except Exception:
+                limit = 8
+            items = get_default_orchestrator().memory.search(
+                user_id=user_id,
+                query=search_query,
+                limit=max(1, min(limit, 50)),
+            )
+            self._send_json({"ok": True, "items": items, "total": len(items)})
             return
         if path == "/ops/status":
             self._send_json(status_operacional())
@@ -1359,6 +1421,50 @@ class NovaHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "invalid_profile"}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json({"ok": True, "profile": premium_atualizar_perfil(user_id, profile)})
+            return
+
+        if path == "/memory":
+            user_id = str(body.get("user_id", "default")).strip() or "default"
+            category = str(body.get("category", "contexto")).strip() or "contexto"
+            content = str(body.get("content", "")).strip()
+            if not content:
+                self._send_json({"ok": False, "error": "content_required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                importance = int(body.get("importance", 1))
+            except Exception:
+                importance = 1
+            scope = str(body.get("scope", "longo_prazo")).strip() or "longo_prazo"
+            item = get_default_orchestrator().memory.save(
+                user_id=user_id,
+                category=category,
+                content=content,
+                importance=importance,
+                scope=scope,
+                source="api_server",
+            )
+            self._send_json({"ok": True, "item": item})
+            return
+
+        if path == "/actions/approve":
+            user_id = str(body.get("user_id", "default")).strip() or "default"
+            tool_name = str(body.get("tool_name", "")).strip()
+            params = body.get("params", {})
+            prompt_text = str(body.get("prompt_text", "")).strip()
+            if not tool_name:
+                self._send_json({"ok": False, "error": "tool_name_required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if not isinstance(params, dict):
+                self._send_json({"ok": False, "error": "invalid_params"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            result = get_default_orchestrator().execute_tool(
+                user_id,
+                tool_name,
+                params,
+                prompt_text=prompt_text,
+                mode="normal",
+            )
+            self._send_json({"ok": True, **result})
             return
 
         if path == "/rag/index":

@@ -87,6 +87,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   DateTime? _adminUnlockedAt;
   List<Map<String, String>> _musicLibrary = [];
   List<Map<String, dynamic>> _reminders = [];
+  Map<String, dynamic> _jarvisStatus = {};
+  Map<String, dynamic> _voiceStatus = {};
+  List<Map<String, dynamic>> _jarvisTools = [];
+  List<Map<String, dynamic>> _recentMemory = [];
 
   bool get _listenModeEnabled => _config['escuta_ativa'] != false;
   bool get _pushToTalkOnly => _config['push_to_talk_only'] != false;
@@ -102,6 +106,67 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String _initialGreeting() {
     final base = '${_periodGreeting()}! Eu sou a NOVA.';
     return '$base Estou aqui, pronta para aprender com você e te ajudar.';
+  }
+
+  String _jarvisUserId() {
+    final named = (_config['nome_usuario']?.toString().trim() ?? '');
+    if (named.isNotEmpty) return named;
+    return 'frontend';
+  }
+
+  String _truncateRailText(String text, {int limit = 82}) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= limit) return normalized;
+    final cut = normalized.substring(0, limit);
+    final safe =
+        cut.contains(' ') ? cut.substring(0, cut.lastIndexOf(' ')) : cut;
+    return '${safe.trim()}...';
+  }
+
+  List<String> _memoryRailItems() {
+    return _recentMemory
+        .map((item) {
+          final category = item['category']?.toString().trim() ?? 'contexto';
+          final content = item['content']?.toString().trim() ?? '';
+          if (content.isEmpty) return '';
+          return '${category.toUpperCase()}: ${_truncateRailText(content)}';
+        })
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> _refreshJarvisFoundation() async {
+    Map<String, dynamic> jarvisStatus = _jarvisStatus;
+    Map<String, dynamic> voiceStatus = _voiceStatus;
+    List<Map<String, dynamic>> tools = _jarvisTools;
+    List<Map<String, dynamic>> recentMemory = _recentMemory;
+
+    try {
+      jarvisStatus = await _api.getJarvisStatus();
+    } catch (_) {}
+
+    try {
+      voiceStatus = await _api.getVoiceStatus();
+    } catch (_) {}
+
+    try {
+      tools = await _api.getJarvisTools();
+    } catch (_) {}
+
+    try {
+      recentMemory = await _api.getRecentMemory(
+        userId: _jarvisUserId(),
+        limit: 6,
+      );
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _jarvisStatus = jarvisStatus;
+      _voiceStatus = voiceStatus;
+      _jarvisTools = tools;
+      _recentMemory = recentMemory;
+    });
   }
 
   Future<Uint8List> _buildDocumentReportPdf({
@@ -174,6 +239,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _loadMusicLibrary();
     _loadReminders();
     _notifications.init();
+    _refreshJarvisFoundation();
   }
 
   @override
@@ -2231,6 +2297,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _speak(reply);
       await _refreshAdminState();
       await _loadReminders();
+      await _refreshJarvisFoundation();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -3516,6 +3583,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           autonomyEnabled: _config['autonomia_ativa'] == true,
                           continuousWake: _effectiveContinuousWake,
                           examples: _projectExamples(),
+                          jarvisMode: (_jarvisStatus['mode']?.toString() ??
+                                  'jarvis_phase1')
+                              .replaceAll('_', ' ')
+                              .toUpperCase(),
+                          toolsTotal: _jarvisTools.isNotEmpty
+                              ? _jarvisTools.length
+                              : ((_jarvisStatus['tools_total'] as num?)
+                                      ?.toInt() ??
+                                  0),
+                          memoryItems: _memoryRailItems(),
+                          toolNames: _jarvisTools
+                              .map((item) =>
+                                  item['name']?.toString().trim() ?? '')
+                              .where((name) => name.isNotEmpty)
+                              .toList(),
+                          voicePhase:
+                              _voiceStatus['phase']?.toString().trim() ??
+                                  'planned',
                           compressed: compressed,
                         ),
                       ),

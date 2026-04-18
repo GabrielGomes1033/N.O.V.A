@@ -27,7 +27,7 @@ jobs:
         run: |
           cd frontend_flutter
           flutter config --enable-windows-desktop
-          flutter build windows --release --dart-define=NOVA_API_URL=https://api.andradeegomes.com
+          flutter build windows --release --dart-define=NOVA_API_URL=https://chatbot-tagq.onrender.com
 
       - name: Pack frontend artifact
         shell: pwsh
