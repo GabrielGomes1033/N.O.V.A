@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -14,13 +15,16 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/chat_api.dart';
+import '../services/api_endpoint_config.dart';
 import '../services/background_wake_service.dart';
 import '../services/app_security_service.dart';
 import '../services/device_connectivity.dart';
+import '../services/device_calendar_service.dart';
 import '../services/local_database.dart';
 import '../services/platform_capabilities.dart';
 import '../services/reminder_notifications.dart';
 import '../services/secure_secrets_service.dart';
+import '../services/speech_formatter.dart';
 import '../services/system_scan_service.dart';
 import '../widgets/home/chat_shell_widgets.dart';
 import '../widgets/home/dialog_widgets.dart';
@@ -40,6 +44,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final LocalDatabaseService _localDb = LocalDatabaseService();
   final DeviceConnectivityService _deviceConnectivity =
       DeviceConnectivityService();
+  final DeviceCalendarService _deviceCalendar = DeviceCalendarService();
   final AppSecurityService _appSecurity = AppSecurityService();
   final SecureSecretsService _secureSecrets = SecureSecretsService();
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -63,6 +68,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'telegram_ativo': false,
     'telegram_token': '',
     'telegram_chat_id': '',
+    'api_base_url': '',
+    'calendar_email': 'gabrielgomes151211@gmail.com',
     'autonomia_ativa': true,
     'autonomia_nivel_risco': 'alto',
     'autonomia_liberdade': 'alta',
@@ -91,10 +98,51 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Map<String, dynamic> _voiceStatus = {};
   List<Map<String, dynamic>> _jarvisTools = [];
   List<Map<String, dynamic>> _recentMemory = [];
+  Map<String, dynamic>? _pendingLocalCalendarEvent;
 
   bool get _listenModeEnabled => _config['escuta_ativa'] != false;
   bool get _pushToTalkOnly => _config['push_to_talk_only'] != false;
   bool get _effectiveContinuousWake => !_pushToTalkOnly && _continuousWakeMode;
+
+  void _syncApiBaseUrlFromConfig() {
+    _api.updateBaseUrl(_config['api_base_url']?.toString());
+  }
+
+  String _buildBackendStatusLine(Map<String, dynamic> health) {
+    final reachable = health['reachable'] == true || health['ok'] == true;
+    final baseUrl = health['base_url']?.toString().trim().isNotEmpty == true
+        ? health['base_url'].toString().trim()
+        : _api.baseUrl;
+    if (!reachable) {
+      return 'Sem conexão com backend em $baseUrl.';
+    }
+
+    final assistant = health['assistant']?.toString().trim().isNotEmpty == true
+        ? health['assistant'].toString().trim()
+        : 'NOVA';
+    final apiVersion = health['api_version']?.toString().trim() ?? '';
+    final versionSuffix = apiVersion.isEmpty ? '' : ' · API v$apiVersion';
+    return '$assistant conectada em $baseUrl$versionSuffix.';
+  }
+
+  Future<void> _refreshBackendConnection() async {
+    final health = await _api.discoverBackend(
+      explicitBaseUrl: _config['api_base_url']?.toString(),
+    );
+    if (!mounted) return;
+    setState(() {
+      _systemStatus = _buildBackendStatusLine(health);
+    });
+  }
+
+  Future<void> _bootstrapApp() async {
+    await _restoreLocalState();
+    await _refreshBackendConnection();
+    await _refreshAdminState();
+    await _loadMusicLibrary();
+    await _loadReminders();
+    await _refreshJarvisFoundation();
+  }
 
   String _periodGreeting() {
     final h = DateTime.now().hour;
@@ -232,14 +280,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _chat.add(NovaChatLine(fromUser: false, text: _initialGreeting()));
-    _restoreLocalState();
     _initTts();
     _initSpeech();
-    _refreshAdminState();
-    _loadMusicLibrary();
-    _loadReminders();
     _notifications.init();
-    _refreshJarvisFoundation();
+    _bootstrapApp();
   }
 
   @override
@@ -318,6 +362,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           }
         }
       });
+      _syncApiBaseUrlFromConfig();
       if (!_listenModeEnabled) {
         _manualListeningStop = true;
         await _speech.stop();
@@ -381,13 +426,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           }
           _systemStatus = 'Painel sincronizado com backend.';
         });
+        _syncApiBaseUrlFromConfig();
         await _saveLocalState();
       }
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _systemStatus =
-            'Sem conexão com backend. Usando dados locais do celular.';
+            'Sem conexão com backend em ${_api.baseUrl}. Usando dados locais do celular.';
       });
     } finally {
       _loadingState = false;
@@ -585,17 +631,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   String _textoMaisHumanoParaFala(String text) {
-    var t = text.trim();
-    if (t.isEmpty) return t;
-    t = t.replaceAll(RegExp(r'https?://\S+'), ' ');
-    t = t.replaceAll('\n', '. ');
-    t = t.replaceAll(':', ', ');
-    t = t.replaceAll(';', ', ');
-    t = t.replaceAll(RegExp(r'[_*`#]'), ' ');
-    t = t.replaceAll('%', ' por cento');
-    t = t.replaceAll('N.O.V.A', 'NOVA');
-    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return t;
+    return SpeechFormatter.prepareForSpeech(text);
   }
 
   List<String> _quebrarEmBlocosDeFala(String text, {int maxChars = 420}) {
@@ -1069,6 +1105,143 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return null;
   }
 
+  bool _isCurrentLocationCommand(String input) {
+    final t = _normalizarParaMatch(input);
+    return t == 'qual e minha localizacao' ||
+        t == 'qual a minha localizacao' ||
+        t == 'minha localizacao' ||
+        t == 'onde eu estou' ||
+        t == 'onde estou';
+  }
+
+  String? _extractWhereIsQuery(String input) {
+    final cleaned = input.trim();
+    final patterns = <RegExp>[
+      RegExp(r'^(?:nova[\s,:-]+)?onde fica\s+(.+)$', caseSensitive: false),
+      RegExp(r'^(?:nova[\s,:-]+)?onde está\s+(.+)$', caseSensitive: false),
+      RegExp(r'^(?:nova[\s,:-]+)?onde esta\s+(.+)$', caseSensitive: false),
+    ];
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match == null) continue;
+      final query = (match.group(1) ?? '').trim();
+      if (query.isEmpty) continue;
+      return query.replaceAll(RegExp(r'^[,:-]+|[,:-]+$'), '').trim();
+    }
+    return null;
+  }
+
+  String? _extractRouteQuery(String input) {
+    final cleaned = input.trim();
+    final patterns = <RegExp>[
+      RegExp(
+        r'^(?:nova[\s,:-]+)?como chego (?:em|até|ate|para)\s+(.+)$',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'^(?:nova[\s,:-]+)?rota (?:para|até|ate)\s+(.+)$',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'^(?:nova[\s,:-]+)?ir (?:para|até|ate)\s+(.+)$',
+        caseSensitive: false,
+      ),
+    ];
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match == null) continue;
+      final query = (match.group(1) ?? '').trim();
+      if (query.isEmpty) continue;
+      return query.replaceAll(RegExp(r'^[,:-]+|[,:-]+$'), '').trim();
+    }
+    return null;
+  }
+
+  String? _extractNearbyQuery(String input) {
+    final cleaned = _normalizarParaMatch(input);
+    final patterns = <RegExp>[
+      RegExp(r'^(.+?)\s+(?:perto de mim|proximo de mim|aqui perto)$'),
+      RegExp(
+        r'^(?:encontre|achar|ache|buscar|busque|procure)\s+(.+?)\s+(?:perto de mim|proximo de mim|aqui perto)$',
+      ),
+    ];
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match == null) continue;
+      final query = (match.group(1) ?? '').trim();
+      if (query.isEmpty) continue;
+      return query;
+    }
+    return null;
+  }
+
+  Future<bool> _ensureLocationPermission() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+  }
+
+  Future<Map<String, dynamic>> _captureCurrentLocation({
+    bool syncBackend = true,
+  }) async {
+    final allowed = await _ensureLocationPermission();
+    if (!allowed) return <String, dynamic>{};
+
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+      ),
+    );
+
+    final reverse = await _api.reverseLocation(
+      latitude: position.latitude,
+      longitude: position.longitude,
+    );
+    final label = (reverse['label']?.toString().trim() ?? '');
+    final display = (reverse['display_name']?.toString().trim() ?? '');
+    final resolvedLabel = label.isNotEmpty
+        ? label
+        : (display.isNotEmpty ? display : 'sua posição atual');
+
+    if (syncBackend) {
+      await _api.updateLocation(
+        label: resolvedLabel,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+    }
+
+    return <String, dynamic>{
+      'label': resolvedLabel,
+      'display_name': display,
+      'latitude': position.latitude,
+      'longitude': position.longitude,
+      'maps_url': reverse['maps_url']?.toString() ?? '',
+    };
+  }
+
+  Future<String> _falarLocalizacaoAtual() async {
+    try {
+      final loc = await _captureCurrentLocation();
+      if (loc.isEmpty) {
+        return 'Não consegui acessar sua localização agora. Ative o GPS e permita o acesso de localização para a NOVA.';
+      }
+      final label = loc['label']?.toString().trim() ?? '';
+      final display = loc['display_name']?.toString().trim() ?? '';
+      if (display.isNotEmpty && display != label) {
+        return 'Você está perto de $label. Referência completa: $display.';
+      }
+      return 'Você está perto de $label.';
+    } catch (_) {
+      return 'Não consegui atualizar sua localização agora.';
+    }
+  }
+
   Future<String> _abrirYoutube([String query = '']) async {
     final normalizedQuery = query.trim();
     final uri = normalizedQuery.isEmpty
@@ -1103,6 +1276,72 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return normalizedQuery.isEmpty
         ? 'Abrindo o Maps.'
         : 'Abrindo busca no Maps por "$normalizedQuery".';
+  }
+
+  Future<String> _abrirBuscaMapaPorLugar(String query) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      return 'Me diga o lugar que você quer localizar.';
+    }
+    try {
+      Map<String, dynamic> loc = <String, dynamic>{};
+      try {
+        loc = await _captureCurrentLocation(syncBackend: true);
+      } catch (_) {
+        loc = <String, dynamic>{};
+      }
+
+      final payload = await _api.searchMapPlaces(
+        normalizedQuery,
+        latitude: loc['latitude'] is double ? loc['latitude'] as double : null,
+        longitude:
+            loc['longitude'] is double ? loc['longitude'] as double : null,
+      );
+      final items = payload['items'];
+      if (items is List && items.isNotEmpty) {
+        final first = items.first;
+        if (first is Map) {
+          final url = first['maps_url']?.toString() ?? '';
+          final rawLabel = first['name']?.toString().trim() ?? '';
+          final label = rawLabel.isNotEmpty ? rawLabel : normalizedQuery;
+          if (url.isNotEmpty) {
+            final ok = await launchUrl(
+              Uri.parse(url),
+              mode: LaunchMode.externalApplication,
+            );
+            if (ok) return 'Abrindo o Maps para $label.';
+          }
+        }
+      }
+    } catch (_) {
+      // Cai para busca direta no Maps.
+    }
+    return _abrirMaps(normalizedQuery);
+  }
+
+  Future<String> _abrirRotaMaps(String destino) async {
+    final normalized = destino.trim();
+    if (normalized.isEmpty) {
+      return 'Me diga para onde você quer ir.';
+    }
+    String originSuffix = '';
+    try {
+      final loc = await _captureCurrentLocation(syncBackend: true);
+      final lat = loc['latitude'];
+      final lon = loc['longitude'];
+      if (lat is double && lon is double) {
+        originSuffix =
+            '&origin=${Uri.encodeComponent('${lat.toStringAsFixed(6)},${lon.toStringAsFixed(6)}')}';
+      }
+    } catch (_) {
+      originSuffix = '';
+    }
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(normalized)}$originSuffix',
+    );
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok) return 'Não consegui abrir a rota no Maps agora.';
+    return 'Abrindo rota para "$normalized" no Maps.';
   }
 
   Future<String> _abrirPlaylistFavoritaYoutube() async {
@@ -1187,7 +1426,158 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return 'Biblioteca local:\n${linhas.join('\n')}';
   }
 
+  bool _isAffirmativeReply(String input) {
+    final normalized = _normalizarParaMatch(input);
+    return normalized == 'sim' ||
+        normalized == 's' ||
+        normalized == 'ok' ||
+        normalized == 'confirmo' ||
+        normalized == 'pode' ||
+        normalized == 'pode sim';
+  }
+
+  bool _isNegativeReply(String input) {
+    final normalized = _normalizarParaMatch(input);
+    return normalized == 'nao' ||
+        normalized == 'n' ||
+        normalized == 'cancelar' ||
+        normalized == 'cancela' ||
+        normalized == 'negativo';
+  }
+
+  String _preferredCalendarEmail() {
+    final configured = _config['calendar_email']?.toString().trim() ?? '';
+    if (configured.isNotEmpty) return configured;
+    return 'gabrielgomes151211@gmail.com';
+  }
+
+  String _formatCalendarDateTime(DateTime value) {
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final year = value.year.toString();
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year às $hour:$minute';
+  }
+
+  Future<String?> _handlePendingLocalCalendarConfirmation(
+      String message) async {
+    final pending = _pendingLocalCalendarEvent;
+    if (pending == null || pending.isEmpty) return null;
+
+    if (_isNegativeReply(message)) {
+      if (mounted) {
+        setState(() => _pendingLocalCalendarEvent = null);
+      } else {
+        _pendingLocalCalendarEvent = null;
+      }
+      return 'Tudo bem. Não agendei nada na agenda do celular.';
+    }
+
+    if (!_isAffirmativeReply(message)) {
+      return 'Preciso de uma confirmação objetiva para criar esse evento na agenda do celular. Responda sim ou nao.';
+    }
+
+    final title = pending['title']?.toString().trim() ?? 'Compromisso';
+    final description = pending['description']?.toString().trim() ?? '';
+    final startAt = pending['start_at'];
+    final endAt = pending['end_at'];
+    if (startAt is! DateTime || endAt is! DateTime) {
+      if (mounted) {
+        setState(() => _pendingLocalCalendarEvent = null);
+      } else {
+        _pendingLocalCalendarEvent = null;
+      }
+      return 'Perdi os dados desse agendamento. Me peça novamente que eu preparo de novo.';
+    }
+
+    final result = await _deviceCalendar.createEvent(
+      title: title,
+      startAt: startAt,
+      endAt: endAt,
+      description: description,
+      preferredEmail: _preferredCalendarEmail(),
+    );
+    if (mounted) {
+      setState(() => _pendingLocalCalendarEvent = null);
+    } else {
+      _pendingLocalCalendarEvent = null;
+    }
+
+    if (result['ok'] == true) {
+      final calendarOwner = result['calendar_owner']?.toString().trim() ?? '';
+      final calendarName = result['calendar_name']?.toString().trim() ?? '';
+      final destino = calendarOwner.isNotEmpty
+          ? calendarOwner
+          : (calendarName.isNotEmpty
+              ? calendarName
+              : _preferredCalendarEmail());
+      return 'Evento criado no calendario do celular e sincronizado pela agenda $destino: $title em ${_formatCalendarDateTime(startAt)}.';
+    }
+
+    final messageOut = result['message']?.toString().trim() ?? '';
+    if (messageOut.isNotEmpty) {
+      return 'Não consegui criar o evento direto no celular: $messageOut';
+    }
+    return 'Não consegui criar o evento direto no celular agora.';
+  }
+
+  Future<String?> _handleLocalCalendarCommand(String message) async {
+    if (!_deviceCalendar.supportsNativeCalendar) return null;
+    if (!DeviceCalendarService.looksLikeCalendarRequest(message)) return null;
+
+    final parsed = _deviceCalendar.parseRequest(message);
+    if (parsed['ok'] != true) {
+      return parsed['message']?.toString().trim().isNotEmpty == true
+          ? parsed['message']?.toString()
+          : 'Nao consegui entender esse agendamento.';
+    }
+
+    final startAt = parsed['start_at'];
+    final endAt = parsed['end_at'];
+    if (startAt is! DateTime || endAt is! DateTime) {
+      return 'Nao consegui montar a data desse evento no celular.';
+    }
+
+    final pending = <String, dynamic>{
+      'title': parsed['title'],
+      'description': parsed['description'],
+      'start_at': startAt,
+      'end_at': endAt,
+      'assumptions': parsed['assumptions'],
+    };
+    if (mounted) {
+      setState(() => _pendingLocalCalendarEvent = pending);
+    } else {
+      _pendingLocalCalendarEvent = pending;
+    }
+
+    final assumptions = parsed['assumptions'] is List
+        ? (parsed['assumptions'] as List)
+            .map((item) => item.toString().trim())
+            .where((item) => item.isNotEmpty)
+            .toList()
+        : <String>[];
+    final buffer = StringBuffer()
+      ..writeln(
+        'Posso agendar isso direto na Google Agenda do seu celular (${_preferredCalendarEmail()}). Responda sim ou nao.',
+      )
+      ..writeln(
+        'Evento: ${parsed['title']} em ${_formatCalendarDateTime(startAt)}.',
+      );
+    if (assumptions.isNotEmpty) {
+      buffer.writeln('Observações: ${assumptions.join(' ')}');
+    }
+    return buffer.toString().trim();
+  }
+
   Future<String?> _handleLocalUiCommands(String message) async {
+    final pendingCalendarReply =
+        await _handlePendingLocalCalendarConfirmation(message);
+    if (pendingCalendarReply != null) {
+      return pendingCalendarReply;
+    }
+
     final t = _normalizarParaMatch(message);
 
     if (t == 'abrir usuarios' || t == 'open usuarios') {
@@ -1288,9 +1678,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ? 'Abrindo Termux em modo de segurança defensiva.'
           : 'Não consegui abrir o Termux agora.';
     }
+    if (_isCurrentLocationCommand(message)) {
+      return _falarLocalizacaoAtual();
+    }
+    final localCalendarReply = await _handleLocalCalendarCommand(message);
+    if (localCalendarReply != null) {
+      return localCalendarReply;
+    }
+    final routeQuery = _extractRouteQuery(message);
+    if (routeQuery != null) {
+      return _abrirRotaMaps(routeQuery);
+    }
+    final nearbyQuery = _extractNearbyQuery(message);
+    if (nearbyQuery != null) {
+      return _abrirBuscaMapaPorLugar('$nearbyQuery perto de mim');
+    }
+    final whereIsQuery = _extractWhereIsQuery(message);
+    if (whereIsQuery != null) {
+      return _abrirBuscaMapaPorLugar(whereIsQuery);
+    }
     final mapsQuery = _extractMapsSearchQuery(message);
     if (mapsQuery != null) {
-      return _abrirMaps(mapsQuery);
+      return _abrirBuscaMapaPorLugar(mapsQuery);
     }
     if (_isMapsOpenCommand(message)) {
       return _abrirMaps();
@@ -2126,6 +2535,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             },
             {'cmd': '/rag <pergunta>', 'desc': 'Consulta base RAG.'},
             {
+              'cmd': 'traduza "<texto>" para ...',
+              'desc': 'Traduz um texto enviado na própria mensagem.'
+            },
+            {
+              'cmd': 'traduza essa pesquisa para ...',
+              'desc': 'Traduz a última pesquisa da conversa.'
+            },
+            {
+              'cmd': 'me fale essa pesquisa em ...',
+              'desc':
+                  'Atalho por voz/texto para retornar a última pesquisa em outro idioma.'
+            },
+            {
+              'cmd': 'agende ... amanhã às 15:00',
+              'desc': 'Cria um evento na Google Agenda com linguagem natural.'
+            },
+            {
+              'cmd': 'marque reunião em 2026-05-01 14:00',
+              'desc': 'Agenda compromisso com data e hora definidas.'
+            },
+            {
               'cmd': 'pesquise no Maps por ...',
               'desc': 'Atalho local por voz/texto para abrir busca no Maps.'
             },
@@ -2298,16 +2728,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _refreshAdminState();
       await _loadReminders();
       await _refreshJarvisFoundation();
-    } catch (_) {
+    } catch (error) {
+      await _refreshBackendConnection();
       if (!mounted) return;
+      final message = _humanizeApiError(error);
       setState(() {
         _chat.add(
-          const NovaChatLine(
+          NovaChatLine(
             fromUser: false,
-            text: 'Falha ao conectar com a API da NOVA.',
+            text: message,
           ),
         );
-        _systemStatus = 'Erro de conexão.';
+        _systemStatus = 'Erro de conexão em ${_api.baseUrl}.';
       });
     } finally {
       if (mounted) {
@@ -2799,6 +3231,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final telegramChatController = TextEditingController(
       text: _config['telegram_chat_id']?.toString() ?? '',
     );
+    final apiBaseUrlController = TextEditingController(
+      text: _config['api_base_url']?.toString() ?? '',
+    );
+    final calendarEmailController = TextEditingController(
+      text: _config['calendar_email']?.toString() ??
+          'gabrielgomes151211@gmail.com',
+    );
     bool vozAtiva = _config['voz_ativa'] == true;
     bool vozNeuralHybrid = _config['voice_neural_hybrid'] != false;
     String voiceProfile =
@@ -2817,8 +3256,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         return StatefulBuilder(
           builder: (context, setLocalState) {
             Future<void> salvarConfig() async {
+              final rawApiBaseUrl = apiBaseUrlController.text.trim();
+              final normalizedApiBaseUrl =
+                  ApiEndpointConfig.normalizeBaseUrl(rawApiBaseUrl);
+              if (rawApiBaseUrl.isNotEmpty && normalizedApiBaseUrl.isEmpty) {
+                _showSnack(
+                  'URL da API invalida. Use algo como http://192.168.0.25:8000',
+                );
+                return;
+              }
+
               final wakeContinuoEfetivo = pushToTalkOnly ? false : wakeContinuo;
-              final novo = {
+              final novoBackend = {
                 'voz_ativa': vozAtiva,
                 'voice_neural_hybrid': vozNeuralHybrid,
                 'voice_profile': voiceProfile,
@@ -2835,17 +3284,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 'admin_guard': adminGuard,
                 'allow_voice_on_lock': allowVoiceOnLock,
               };
+              final novoLocal = {
+                ...novoBackend,
+                'api_base_url': normalizedApiBaseUrl,
+                'calendar_email': calendarEmailController.text.trim(),
+              };
+              final resolvedApiBaseUrl = ApiEndpointConfig.resolve(
+                explicitBaseUrl: normalizedApiBaseUrl,
+              ).baseUrl;
 
               try {
-                final atualizado = await _api.updateConfig(novo);
+                final atualizado = await _api.updateConfig(novoBackend);
                 if (!mounted) return;
                 setState(() {
-                  _config = {..._config, ...novo, ...atualizado};
+                  _config = {..._config, ...atualizado, ...novoLocal};
                   _continuousWakeMode = _config['continuous_wake'] != false;
                   if (_pushToTalkOnly) {
                     _continuousWakeMode = false;
                   }
+                  _systemStatus = 'API pronta em $resolvedApiBaseUrl.';
                 });
+                _syncApiBaseUrlFromConfig();
                 if (!escutaAtiva) {
                   _manualListeningStop = true;
                   await _speech.stop();
@@ -2868,12 +3327,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               } catch (_) {
                 if (!mounted) return;
                 setState(() {
-                  _config = {..._config, ...novo};
+                  _config = {..._config, ...novoLocal};
                   _continuousWakeMode = _config['continuous_wake'] != false;
                   if (_pushToTalkOnly) {
                     _continuousWakeMode = false;
                   }
+                  _systemStatus =
+                      'Config local salva para $resolvedApiBaseUrl.';
                 });
+                _syncApiBaseUrlFromConfig();
                 await _saveLocalState();
                 if (!context.mounted) return;
                 Navigator.of(context).pop();
@@ -3016,6 +3478,53 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               autoDocumentLearning = value;
                               setLocalState(() {});
                             },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: _boxDeco,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Conexao com API',
+                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 6),
+                          NovaInput(
+                            controller: apiBaseUrlController,
+                            hintText: 'http://192.168.0.25:8000',
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Opcional. Deixe vazio para usar o auto-detect da plataforma. '
+                            'Preencha para apontar o app para um backend especifico sem recompilar.',
+                            style: TextStyle(
+                                color: Color(0xFF6689A2), fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: _boxDeco,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Agenda do celular',
+                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 6),
+                          NovaInput(
+                            controller: calendarEmailController,
+                            hintText: 'gabrielgomes151211@gmail.com',
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Conta preferida para salvar eventos no Android. A NOVA tenta usar essa agenda primeiro.',
+                            style: TextStyle(
+                                color: Color(0xFF6689A2), fontSize: 12),
                           ),
                         ],
                       ),
@@ -3313,6 +3822,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     wakeWordController.dispose();
     telegramTokenController.dispose();
     telegramChatController.dispose();
+    apiBaseUrlController.dispose();
   }
 
   void _showSnack(String message) {
@@ -3340,7 +3850,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           'recompile o app com NOVA_API_URL correto.';
     }
     if (raw.contains('Falha de conexão com a API')) {
-      return 'Sem conexão com a API. Verifique URL do backend, internet e porta.';
+      return 'Sem conexão com a API em ${_api.baseUrl}. '
+          'Verifique URL do backend, internet e porta.';
     }
     return raw;
   }
@@ -3514,6 +4025,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       'Nova, crie um projeto chamado Atlas Comercial na área Comercial',
       'Novo projeto "Portal do Cliente" com prioridade alta',
       'Crie um projeto com descrição MVP B2B e link https://exemplo.com',
+      'Traduza "Bom dia, equipe" para ingles',
+      'Pesquise sobre electric cars e, quando eu perguntar, responda sim para traduzir',
+      'Nova, me fale essa pesquisa em ingles',
+      'Agende reunião com cliente amanhã às 15h',
+      'Marque foco de estudos em 2026-05-01 19:00 até 20:30',
     ];
   }
 

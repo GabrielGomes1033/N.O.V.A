@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +71,99 @@ class JarvisPhase1Tests(unittest.TestCase):
         self.assertFalse(save_result["approval_needed"])
         self.assertEqual(save_result["tool_name"], "save_memory")
         self.assertIn("Flutter", recall_result["reply"])
+
+    def test_orchestrator_uses_last_intent_for_short_follow_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(Path(tmpdir) / "memory.db")
+            orchestrator = NovaOrchestrator(
+                memory=store,
+                tools=build_default_tools(store),
+                llm=RuleBasedLLM(),
+            )
+
+            with patch("core.respostas.random.choice", side_effect=lambda seq: seq[0]):
+                orchestrator.handle(
+                    "gabriel",
+                    "estou triste",
+                    mode="normal",
+                )
+                follow_up = orchestrator.handle(
+                    "gabriel",
+                    "e voce?",
+                    mode="normal",
+                )
+
+        self.assertIn("continuo aqui com você", follow_up["reply"].lower())
+
+    def test_orchestrator_reuses_profile_name_in_contextual_reply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(Path(tmpdir) / "memory.db")
+            orchestrator = NovaOrchestrator(
+                memory=store,
+                tools=build_default_tools(store),
+                llm=RuleBasedLLM(),
+            )
+
+            with patch("core.respostas.random.choice", side_effect=lambda seq: seq[0]):
+                orchestrator.handle(
+                    "gabriel",
+                    "meu nome é Gabriel",
+                    mode="normal",
+                )
+                resposta = orchestrator.handle(
+                    "gabriel",
+                    "estou triste",
+                    mode="normal",
+                )
+
+        self.assertIn("Gabriel", resposta["reply"])
+        self.assertIn("Sinto muito", resposta["reply"])
+
+    def test_semantic_memory_indexes_turns_for_later_retrieval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(Path(tmpdir) / "memory.db")
+            orchestrator = NovaOrchestrator(
+                memory=store,
+                tools=build_default_tools(store),
+                llm=RuleBasedLLM(),
+            )
+
+            orchestrator.handle(
+                "gabriel",
+                "lembre que meu framework favorito e Flutter",
+                mode="normal",
+            )
+            semantic = orchestrator.vector_store.search(
+                "gabriel",
+                "stack favorita",
+                limit=3,
+            )
+
+        self.assertTrue(semantic)
+        self.assertIn("Flutter", semantic[0]["content"])
+
+    def test_search_memory_uses_semantic_retrieval_for_paraphrase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MemoryStore(Path(tmpdir) / "memory.db")
+            orchestrator = NovaOrchestrator(
+                memory=store,
+                tools=build_default_tools(store),
+                llm=RuleBasedLLM(),
+            )
+
+            orchestrator.handle(
+                "gabriel",
+                "lembre que meu framework favorito e Flutter",
+                mode="normal",
+            )
+            resposta = orchestrator.handle(
+                "gabriel",
+                "o que voce lembra sobre stack favorita",
+                mode="normal",
+            )
+
+        self.assertEqual(resposta["tool_name"], "search_memory")
+        self.assertIn("Flutter", resposta["reply"])
 
     def test_legacy_chat_route_accepts_new_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

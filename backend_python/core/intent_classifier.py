@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from core.google_calendar import looks_like_calendar_request
+
 
 SEARCH_PREFIXES = (
     "pesquise",
@@ -35,6 +37,7 @@ def _normalize_search_target(query: str) -> str:
     if not target:
         return ""
 
+    search_engines = r"(?:google|bing|duckduckgo|duck\s+duck\s+go|brave|serpapi)"
     directed_prefixes = (
         (
             r"^(?:na|no|em)\s+wikipedia\s+(?:sobre\s+)?(.+)$",
@@ -47,6 +50,14 @@ def _normalize_search_target(query: str) -> str:
         (
             r"^(.+?)\s+(?:na|no|em)\s+wikipedia$",
             lambda m: f"{m.group(1).strip()} wikipedia",
+        ),
+        (
+            rf"^(?:na|no|em)\s+{search_engines}\s+(?:sobre\s+)?(.+)$",
+            lambda m: m.group(1).strip(),
+        ),
+        (
+            rf"^(.+?)\s+(?:na|no|em)\s+{search_engines}$",
+            lambda m: m.group(1).strip(),
         ),
         (
             r"^(?:na|no|em)\s+(?:internet|web)\s+(?:sobre\s+)?(.+)$",
@@ -217,5 +228,12 @@ def classify_intent(text: str) -> IntentDecision:
                 tool_name="create_project",
                 params={"name": name, "description": description},
             )
+
+    if looks_like_calendar_request(msg):
+        return IntentDecision(
+            type="tool_call",
+            tool_name="schedule_calendar_event",
+            params={"request_text": msg},
+        )
 
     return IntentDecision()

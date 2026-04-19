@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONT_DIR="${ROOT_DIR}/frontend_flutter"
-API_URL="${1:-${NOVA_API_URL:-}}"
+API_URL="${1:-${NOVA_API_URL:-https://api.andradeegomes.com}}"
 APK_PATH="${FRONT_DIR}/build/app/outputs/flutter-apk/app-release.apk"
 
 if [[ -z "${API_URL}" ]]; then

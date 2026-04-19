@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+import 'api_endpoint_config.dart';
 
 class ApiHttpException implements Exception {
   ApiHttpException({
@@ -29,44 +32,20 @@ class ApiHttpException implements Exception {
 class ChatApiService {
   ChatApiService({
     String? baseUrl,
-  }) : _baseUrl = baseUrl ?? _defaultBaseUrl();
+  }) : _endpoint = ApiEndpointConfig.resolve(explicitBaseUrl: baseUrl);
 
-  final String _baseUrl;
+  static const Duration _requestTimeout = Duration(seconds: 18);
 
-  String get baseUrl => _baseUrl;
+  ApiEndpointConfig _endpoint;
 
-  static String _defaultBaseUrl() {
-    const defined = String.fromEnvironment('NOVA_API_URL', defaultValue: '');
-    if (defined.isNotEmpty) return defined;
+  String get baseUrl => _endpoint.baseUrl;
+  String get baseUrlSource => _endpoint.source;
 
-    if (kIsWeb) {
-      final host = Uri.base.host;
-      final scheme = Uri.base.scheme == 'https' ? 'https' : 'http';
-      final isLocal = host == 'localhost' ||
-          host == '127.0.0.1' ||
-          host.startsWith('192.168.') ||
-          host.startsWith('10.') ||
-          host.startsWith('172.');
-
-      if (host == 'api.andradeegomes.com') {
-        return 'https://api.andradeegomes.com';
-      }
-
-      if (host == 'andradeegomes.com' || host.endsWith('.andradeegomes.com')) {
-        return 'https://api.andradeegomes.com';
-      }
-
-      if (isLocal) {
-        return '$scheme://$host:8000';
-      }
-
-      return '$scheme://$host';
-    }
-
-    return 'http://10.0.2.2:8000';
+  void updateBaseUrl(String? baseUrl) {
+    _endpoint = ApiEndpointConfig.resolve(explicitBaseUrl: baseUrl);
   }
 
-  Uri _uri(String path) => Uri.parse('$_baseUrl$path');
+  Uri _uriForBase(String baseUrl, String path) => Uri.parse('$baseUrl$path');
 
   Future<http.Response> _performHttp(
     String method,
@@ -76,13 +55,17 @@ class ChatApiService {
   }) {
     switch (method) {
       case 'GET':
-        return http.get(uri, headers: headers);
+        return http.get(uri, headers: headers).timeout(_requestTimeout);
       case 'POST':
-        return http.post(uri, headers: headers, body: encodedBody);
+        return http
+            .post(uri, headers: headers, body: encodedBody)
+            .timeout(_requestTimeout);
       case 'PUT':
-        return http.put(uri, headers: headers, body: encodedBody);
+        return http
+            .put(uri, headers: headers, body: encodedBody)
+            .timeout(_requestTimeout);
       case 'DELETE':
-        return http.delete(uri, headers: headers);
+        return http.delete(uri, headers: headers).timeout(_requestTimeout);
       default:
         throw Exception('Metodo HTTP nao suportado: $method');
     }
@@ -167,14 +150,33 @@ class ChatApiService {
     String path, {
     Map<String, dynamic>? body,
   }) async {
+    return _requestJsonAtBase(
+      _endpoint.baseUrl,
+      method,
+      path,
+      body: body,
+    );
+  }
+
+  Future<Map<String, dynamic>> _requestJsonAtBase(
+    String baseUrl,
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowPathFallback = true,
+  }) async {
+    final normalizedBaseUrl = ApiEndpointConfig.normalizeBaseUrl(baseUrl);
     final encoded = body == null ? null : jsonEncode(body);
     final headers = {'Content-Type': 'application/json'};
-    final attempts = <String>[path, ..._fallbackPaths(path)];
+    final attempts = <String>[
+      path,
+      if (allowPathFallback) ..._fallbackPaths(path),
+    ];
     ApiHttpException? lastError;
 
     for (var i = 0; i < attempts.length; i++) {
       final currentPath = attempts[i];
-      final uri = _uri(currentPath);
+      final uri = _uriForBase(normalizedBaseUrl, currentPath);
 
       late http.Response response;
       try {
@@ -183,6 +185,10 @@ class ChatApiService {
           uri,
           headers: headers,
           encodedBody: encoded,
+        );
+      } on TimeoutException {
+        throw Exception(
+          'Tempo esgotado ao conectar com a API em ${uri.toString()}.',
         );
       } catch (e) {
         throw Exception(
@@ -226,9 +232,58 @@ class ChatApiService {
           method: method,
           path: path,
           statusCode: 0,
-          url: _uri(path).toString(),
+          url: _uriForBase(normalizedBaseUrl, path).toString(),
           message: 'Falha desconhecida ao chamar API.',
         );
+  }
+
+  Future<Map<String, dynamic>> discoverBackend({
+    String? explicitBaseUrl,
+  }) async {
+    final candidates = ApiEndpointConfig.candidates(
+      explicitBaseUrl: explicitBaseUrl,
+    );
+    final attempts = <Map<String, dynamic>>[];
+
+    for (final candidate in candidates) {
+      try {
+        final payload = await _requestJsonAtBase(
+          candidate.baseUrl,
+          'GET',
+          '/health',
+          allowPathFallback: false,
+        );
+        _endpoint = candidate;
+        return {
+          ...payload,
+          'reachable': true,
+          'base_url': candidate.baseUrl,
+          'source': candidate.source,
+          'attempts': attempts,
+        };
+      } catch (e) {
+        attempts.add({
+          'base_url': candidate.baseUrl,
+          'source': candidate.source,
+          'error': e.toString().replaceFirst('Exception: ', ''),
+        });
+      }
+    }
+
+    return {
+      'ok': false,
+      'reachable': false,
+      'base_url': _endpoint.baseUrl,
+      'source': _endpoint.source,
+      'attempts': attempts,
+      'message': attempts.isEmpty
+          ? 'Nenhum endpoint candidato disponivel.'
+          : attempts.first['error'],
+    };
+  }
+
+  Future<Map<String, dynamic>> getHealthProfile() {
+    return _requestJson('GET', '/health');
   }
 
   Future<Map<String, dynamic>> sendJarvisMessage(
@@ -267,7 +322,7 @@ class ChatApiService {
   }
 
   Future<bool> healthCheck() async {
-    final payload = await _requestJson('GET', '/health');
+    final payload = await getHealthProfile();
     return payload['ok'] == true;
   }
 
@@ -477,6 +532,33 @@ class ChatApiService {
     if (loc is Map<String, dynamic>) return loc;
     if (loc is Map) return Map<String, dynamic>.from(loc);
     return {};
+  }
+
+  Future<Map<String, dynamic>> reverseLocation({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final suffix =
+        '/location/reverse?lat=${Uri.encodeComponent(latitude.toString())}&lon=${Uri.encodeComponent(longitude.toString())}';
+    final payload = await _requestJson('GET', suffix);
+    return payload;
+  }
+
+  Future<Map<String, dynamic>> searchMapPlaces(
+    String query, {
+    double? latitude,
+    double? longitude,
+  }) async {
+    final buffer =
+        StringBuffer('/maps/search?q=${Uri.encodeComponent(query.trim())}');
+    if (latitude != null) {
+      buffer.write('&lat=${Uri.encodeComponent(latitude.toString())}');
+    }
+    if (longitude != null) {
+      buffer.write('&lon=${Uri.encodeComponent(longitude.toString())}');
+    }
+    final payload = await _requestJson('GET', buffer.toString());
+    return payload;
   }
 
   Future<Map<String, dynamic>> updateLocation({

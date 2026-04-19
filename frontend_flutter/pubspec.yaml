@@ -34,6 +34,7 @@ dependencies:
   printing: ^5.14.0
   # Reconhecimento de fala (microfone -> texto).
   speech_to_text: ^7.0.0
+  geolocator: ^13.0.2
   # Tipografia mais profissional para o painel.
   google_fonts: ^6.2.1
 

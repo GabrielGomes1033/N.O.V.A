@@ -40,6 +40,13 @@ def _is_negative(text: str) -> bool:
     }
 
 
+def _pending_tool_subject(tool_name: str) -> str:
+    tool = str(tool_name or "").strip()
+    if tool == "schedule_calendar_event":
+        return "esse agendamento na Google Agenda"
+    return tool or "essa acao"
+
+
 def jarvis_user_id(context: dict[str, Any] | None) -> str:
     ctx = context or {}
     return (
@@ -64,11 +71,11 @@ def process_pending_tool_confirmation(
         ctx["jarvis_tool_pending"] = None
         return {
             "handled": True,
-            "reply": style_response("Acao cancelada. Nenhuma automacao foi executada.", modo=mode),
+            "reply": style_response("Acao cancelada. Nenhuma acao foi executada.", modo=mode),
         }
 
     if not _is_affirmative(text):
-        tool_name = str(pending.get("tool_name", "")).strip() or "essa acao"
+        tool_name = _pending_tool_subject(str(pending.get("tool_name", "")).strip())
         return {
             "handled": True,
             "reply": style_response(

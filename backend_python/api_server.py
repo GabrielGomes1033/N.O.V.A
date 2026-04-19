@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 import time
+import unicodedata
 from urllib.parse import parse_qs, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -69,6 +70,7 @@ from core.nova_unica import (
     registrar_metrica,
     resumo_metricas,
     resumo_metricas_recursos,
+    saudacao_por_periodo,
     gerar_alertas_recomendacoes,
 )
 from core.notion_projects import (
@@ -114,6 +116,7 @@ from core.automacoes_seguras import (
 from core.voz_neural_api import sintetizar_neural_base64
 from core.voz import falar
 from core.agent_observability import registrar_trace, listar_traces, resumo_traces
+from core.api_profile import build_api_health
 from core.runtime_guard import checar_rate_limit, validar_token, token_api_configurado
 from core.autonomia_runtime import (
     atualizar_autonomia,
@@ -141,6 +144,7 @@ from routes.knowledge_routes import (
     handle_knowledge_post,
     handle_knowledge_put,
 )
+from integrations.maps_provider import gerar_link_busca_maps, gerar_link_rota_maps, reverse_geocode, search_places
 
 
 def _novo_contexto():
@@ -170,6 +174,148 @@ def sincronizar_memoria():
     memoria["tratamento"] = CONTEXTO.get("tratamento", "")
     memoria["modo_pesquisa"] = bool(CONTEXTO.get("modo_pesquisa", False))
     salvar_memoria_usuario(memoria)
+
+
+def _normalizar_match(texto: str) -> str:
+    base = unicodedata.normalize("NFKD", str(texto or ""))
+    base = base.encode("ascii", "ignore").decode("ascii").lower()
+    base = re.sub(r"[^\w\s]", " ", base)
+    return re.sub(r"\s+", " ", base).strip()
+
+
+def _carregar_localizacao_memoria() -> dict:
+    memoria = carregar_memoria_usuario()
+    return {
+        "label": str(memoria.get("ultima_localizacao", "") or "").strip(),
+        "latitude": str(memoria.get("ultima_latitude", "") or "").strip(),
+        "longitude": str(memoria.get("ultima_longitude", "") or "").strip(),
+        "updated_at": str(memoria.get("ultima_localizacao_em", "") or "").strip(),
+    }
+
+
+def _intencao_localizacao_atual(texto: str) -> bool:
+    t = _normalizar_match(texto)
+    if t.startswith("nova "):
+        t = t[5:].strip()
+    frases = {
+        "qual e minha localizacao",
+        "qual a minha localizacao",
+        "onde eu estou",
+        "onde estou",
+        "minha localizacao",
+        "me diga minha localizacao",
+    }
+    return t in frases or any(frase in t for frase in frases)
+
+
+def _extrair_consulta_onde_fica(texto: str) -> str:
+    t = str(texto or "").strip()
+    padroes = (
+        r"^(?:nova[\s,:-]+)?onde fica\s+(.+)$",
+        r"^(?:nova[\s,:-]+)?onde esta\s+(.+)$",
+        r"^(?:nova[\s,:-]+)?onde fica o\s+(.+)$",
+    )
+    for padrao in padroes:
+        match = re.match(padrao, t, flags=re.IGNORECASE)
+        if match:
+            return str(match.group(1) or "").strip(" ?!.,")
+    return ""
+
+
+def _extrair_consulta_rota(texto: str) -> str:
+    t = str(texto or "").strip()
+    padroes = (
+        r"^(?:nova[\s,:-]+)?como chego (?:em|ate|até|para)\s+(.+)$",
+        r"^(?:nova[\s,:-]+)?rota (?:para|ate|até)\s+(.+)$",
+        r"^(?:nova[\s,:-]+)?ir (?:para|ate|até)\s+(.+)$",
+    )
+    for padrao in padroes:
+        match = re.match(padrao, t, flags=re.IGNORECASE)
+        if match:
+            return str(match.group(1) or "").strip(" ?!.,")
+    return ""
+
+
+def _extrair_consulta_proximos(texto: str) -> str:
+    t = _normalizar_match(texto)
+    padroes = (
+        r"^(.+?)\s+(?:perto de mim|proximo de mim|proximos de mim|aqui perto)$",
+        r"^(?:encontre|achar|ache|buscar|busque|procure)\s+(.+?)\s+(?:perto de mim|proximo de mim|aqui perto)$",
+    )
+    for padrao in padroes:
+        match = re.match(padrao, t)
+        if match:
+            return str(match.group(1) or "").strip()
+    return ""
+
+
+def _responder_localizacao_atual() -> str:
+    memoria = carregar_memoria_usuario()
+    label = str(memoria.get("ultima_localizacao", "") or "").strip()
+    lat = str(memoria.get("ultima_latitude", "") or "").strip()
+    lon = str(memoria.get("ultima_longitude", "") or "").strip()
+    updated_at = str(memoria.get("ultima_localizacao_em", "") or "").strip()
+
+    if lat and lon and (not label or label.replace(",", "").replace(".", "").isdigit()):
+        resultado = reverse_geocode(float(lat), float(lon))
+        if resultado.get("ok"):
+            label = str(resultado.get("label", "") or resultado.get("display_name", "")).strip()
+            memoria["ultima_localizacao"] = label
+            salvar_memoria_usuario(memoria)
+
+    if not lat or not lon:
+        return (
+            "Ainda nao tenho sua localizacao atual. Abra a NOVA no celular e diga "
+            "'Nova, qual e minha localizacao' para eu atualizar isso com GPS."
+        )
+
+    if label:
+        base = f"Voce esta perto de {label}."
+    else:
+        base = f"Sua localizacao atual esta em latitude {lat} e longitude {lon}."
+    if updated_at:
+        base += f" Ultima atualizacao em {updated_at}."
+    return base
+
+
+def _responder_busca_mapa(consulta: str, modo: str = "busca") -> str:
+    consulta_limpa = str(consulta or "").strip()
+    if not consulta_limpa:
+        return "Me diga o lugar que voce quer localizar no mapa."
+
+    memoria = carregar_memoria_usuario()
+    lat = memoria.get("ultima_latitude")
+    lon = memoria.get("ultima_longitude")
+    try:
+        lat_num = float(lat) if str(lat).strip() else None
+    except Exception:
+        lat_num = None
+    try:
+        lon_num = float(lon) if str(lon).strip() else None
+    except Exception:
+        lon_num = None
+    resultado = search_places(consulta_limpa, latitude=lat_num, longitude=lon_num, limit=3)
+
+    link = gerar_link_busca_maps(consulta_limpa)
+    if resultado.get("ok") and (resultado.get("items") or []):
+        item = resultado["items"][0]
+        nome = str(item.get("name", "") or item.get("display_name", "")).strip()
+        endereco = str(item.get("display_name", "")).strip()
+        link_item = str(item.get("maps_url", "")).strip() or link
+        if modo == "rota":
+            link = gerar_link_rota_maps(nome or consulta_limpa, latitude=str(lat or ""), longitude=str(lon or ""))
+            if endereco:
+                return f"{nome or consulta_limpa} fica em {endereco}. Rota pronta no mapa: {link}"
+            return f"Montei a rota para {nome or consulta_limpa}. Mapa: {link}"
+        if modo == "proximos":
+            return f"Encontrei {nome or consulta_limpa} perto de voce. Referencia: {endereco}. Mapa: {link_item}"
+        return f"{nome or consulta_limpa} fica em {endereco}. Mapa: {link_item}"
+
+    if modo == "rota":
+        return f"Montei uma rota tentativa para {consulta_limpa}. Abra no mapa: {gerar_link_rota_maps(consulta_limpa, latitude=str(lat or ''), longitude=str(lon or ''))}"
+    if modo == "proximos":
+        return f"Abri uma busca de mapa por {consulta_limpa} perto de voce: {link}"
+    return f"Abri uma busca de mapa por {consulta_limpa}: {link}"
 
 
 def _exemplos_criacao_projeto() -> str:
@@ -796,6 +942,21 @@ def processar_mensagem(user):
             linhas.append(f"{i}. {item.get('texto')} ({quando})")
         return ret("Seus lembretes:\n" + "\n".join(linhas), evento="reminder_list")
 
+    if _intencao_localizacao_atual(user):
+        return ret(_responder_localizacao_atual(), evento="location_current")
+
+    consulta_rota = _extrair_consulta_rota(user)
+    if consulta_rota:
+        return ret(_responder_busca_mapa(consulta_rota, modo="rota"), evento="maps_route")
+
+    consulta_perto = _extrair_consulta_proximos(user)
+    if consulta_perto:
+        return ret(_responder_busca_mapa(consulta_perto, modo="proximos"), evento="maps_nearby")
+
+    consulta_mapa = _extrair_consulta_onde_fica(user)
+    if consulta_mapa:
+        return ret(_responder_busca_mapa(consulta_mapa, modo="busca"), evento="maps_search")
+
     if any(k in user_l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado financeiro"]):
         return ret(formatar_cotacoes_humanas(cotacoes_financeiras()), evento="market")
 
@@ -911,17 +1072,14 @@ def processar_mensagem(user):
     intencao = detectar_intencao(user, CONTEXTO)
     CONTEXTO["ultima_intencao"] = intencao
     resposta = responder(user, contexto=CONTEXTO)
+    briefing = briefing_automatico_se_necessario() if intencao in {"saudacao", "ajuda"} else None
     if intencao == "saudacao":
         memoria = carregar_memoria_usuario()
-        hora = datetime.now().hour
-        if 5 <= hora < 12:
-            saud = "Bom dia"
-        elif 12 <= hora < 18:
-            saud = "Boa tarde"
-        else:
-            saud = "Boa noite"
+        saud = saudacao_por_periodo()
         nome = (CONTEXTO.get("nome_usuario") or memoria.get("nome_usuario") or "").strip()
-        if nome:
+        if briefing:
+            resposta = briefing
+        elif nome:
             resposta = f"{saud}, {nome}. Como posso ajudar você agora?"
         else:
             resposta = f"{saud}. Como posso ajudar você agora?"
@@ -931,8 +1089,7 @@ def processar_mensagem(user):
         resposta += " Eu também posso te ajudar com programação, APIs e arquitetura de agentes de IA."
     if "gosto" in user_l or "me adapte" in user_l or "adapt" in user_l:
         resposta += " " + resumo_adaptacao_usuario()
-    briefing = briefing_automatico_se_necessario()
-    if briefing and intencao in {"saudacao", "ajuda"}:
+    if briefing and intencao == "ajuda":
         resposta = f"{resposta}\n\n{briefing}"
     try:
         perfil = atualizar_perfil_por_interacao(user, resposta)
@@ -1171,7 +1328,7 @@ class NovaHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/health":
-            self._send_json({"ok": True, "service": "nova-api"})
+            self._send_json(build_api_health(entrypoint="api_server"))
             return
         if path == "/jarvis/status":
             self._send_json(jarvis_status_snapshot())
@@ -1347,6 +1504,33 @@ class NovaHandler(BaseHTTPRequestHandler):
                     },
                 }
             )
+            return
+        if path == "/location/reverse":
+            lat_raw = (query.get("lat", [""])[0] or "").strip()
+            lon_raw = (query.get("lon", [""])[0] or "").strip()
+            try:
+                lat = float(lat_raw)
+                lon = float(lon_raw)
+            except Exception:
+                self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            out = reverse_geocode(lat, lon)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_GATEWAY
+            self._send_json(out, status=status)
+            return
+        if path == "/maps/search":
+            busca = (query.get("q", [""])[0] or "").strip()
+            lat_raw = (query.get("lat", [""])[0] or "").strip()
+            lon_raw = (query.get("lon", [""])[0] or "").strip()
+            try:
+                lat = float(lat_raw) if lat_raw else None
+                lon = float(lon_raw) if lon_raw else None
+            except Exception:
+                self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            out = search_places(busca, latitude=lat, longitude=lon, limit=3)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
             return
         if path == "/reminders":
             lembretes = listar_lembretes()

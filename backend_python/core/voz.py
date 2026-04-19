@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 
+from core.speech_formatter import preparar_texto_para_fala
+
 
 PASTA_CACHE_VOZ = Path("/tmp/nova_voice")
 VOZ_NEURAL_PADRAO = "pt-BR-FranciscaNeural"
@@ -116,8 +118,6 @@ def _pontuacao_humana(texto):
     texto = re.sub(r"\bnão consegui abrir o navegador automaticamente, mas aqui está sua pesquisa\b", "não consegui abrir o navegador, mas a pesquisa está no chat", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\beu poderei responder\b", "eu vou responder", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\btotal de respostas ensinadas para essa pergunta\b", "agora eu sei", texto, flags=re.IGNORECASE)
-    texto = re.sub(r"\b(\d{2}):(\d{2})\b", r"\1 e \2", texto)
-    texto = re.sub(r"\b(\d{2})/(\d{2})/(\d{4})\b", r"\1 do \2 de \3", texto)
     texto = re.sub(r"\bNOVA\b", "Nova", texto)
     texto = re.sub(r"\s+", " ", texto).strip(" ,.-")
 
@@ -127,6 +127,7 @@ def _pontuacao_humana(texto):
 
 
 def preparar_texto_para_voz(texto):
+    texto = preparar_texto_para_fala(texto)
     texto = _pontuacao_humana(texto)
     texto = re.sub(r"\b(Oi|Olá|Tudo certo|Imagina)\b(?![,!.?])", r"\1,", texto)
     texto = texto.replace(". ", "... ")

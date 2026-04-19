@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.text.Normalizer
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -169,6 +170,84 @@ class NovaWakeService : Service(), RecognitionListener {
         return noAccents.replace("[^a-z0-9 ]".toRegex(), " ").replace("\\s+".toRegex(), " ").trim()
     }
 
+    private fun numberToWords(number: Int): String {
+        val units = arrayOf("zero", "um", "dois", "tres", "quatro", "cinco", "seis", "sete", "oito", "nove")
+        val teens = mapOf(
+            10 to "dez",
+            11 to "onze",
+            12 to "doze",
+            13 to "treze",
+            14 to "quatorze",
+            15 to "quinze",
+            16 to "dezesseis",
+            17 to "dezessete",
+            18 to "dezoito",
+            19 to "dezenove",
+        )
+        val tens = mapOf(
+            20 to "vinte",
+            30 to "trinta",
+            40 to "quarenta",
+            50 to "cinquenta",
+        )
+
+        return when {
+            number < 10 -> units[number]
+            number < 20 -> teens[number] ?: number.toString()
+            number < 60 -> {
+                val base = (number / 10) * 10
+                val remainder = number % 10
+                if (remainder == 0) tens[base] ?: number.toString()
+                else "${tens[base]} e ${numberToWords(remainder)}"
+            }
+            else -> number.toString()
+        }
+    }
+
+    private fun hourToWords(date: Date): String {
+        val calendar = Calendar.getInstance(Locale("pt", "BR")).apply { time = date }
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        val minute = calendar.get(Calendar.MINUTE)
+
+        val period = when {
+            hour < 6 -> "da madrugada"
+            hour < 12 -> "da manhã"
+            hour < 19 -> "da tarde"
+            else -> "da noite"
+        }
+
+        val base = when (hour) {
+            0 -> "meia-noite"
+            12 -> "meio-dia"
+            else -> numberToWords(if (hour % 12 == 0) 12 else hour % 12)
+        }
+
+        return when (minute) {
+            0 -> if (base == "meia-noite" || base == "meio-dia") "$base em ponto" else "$base em ponto $period"
+            30 -> if (base == "meia-noite" || base == "meio-dia") "$base e meia" else "$base e meia $period"
+            else -> if (base == "meia-noite" || base == "meio-dia") "$base e ${numberToWords(minute)}" else "$base e ${numberToWords(minute)} $period"
+        }
+    }
+
+    private fun dateToWords(date: Date): String {
+        val calendar = Calendar.getInstance(Locale("pt", "BR")).apply { time = date }
+        val day = calendar.get(Calendar.DAY_OF_MONTH)
+        val month = SimpleDateFormat("MMMM", Locale("pt", "BR")).format(date)
+        val year = calendar.get(Calendar.YEAR)
+        val dayText = if (day == 1) "primeiro" else numberToWords(day)
+        val yearText = when (year) {
+            2024 -> "dois mil e vinte e quatro"
+            2025 -> "dois mil e vinte e cinco"
+            2026 -> "dois mil e vinte e seis"
+            2027 -> "dois mil e vinte e sete"
+            2028 -> "dois mil e vinte e oito"
+            2029 -> "dois mil e vinte e nove"
+            2030 -> "dois mil e trinta"
+            else -> year.toString()
+        }
+        return "$dayText de $month de $yearText"
+    }
+
     private fun containsWakeWord(text: String): Boolean {
         val t = normalize(text)
         val w = normalize(wakeWord)
@@ -207,12 +286,10 @@ class NovaWakeService : Service(), RecognitionListener {
 
         when {
             cmd.contains("que horas sao") || cmd.contains("qual a hora") -> {
-                val hora = SimpleDateFormat("HH:mm", Locale("pt", "BR")).format(Date())
-                speak("Agora são $hora.")
+                speak("Agora são ${hourToWords(Date())}.")
             }
             cmd.contains("que dia e hoje") || cmd.contains("qual a data") -> {
-                val data = SimpleDateFormat("dd 'de' MMMM", Locale("pt", "BR")).format(Date())
-                speak("Hoje é $data.")
+                speak("Hoje é ${dateToWords(Date())}.")
             }
             cmd.contains("status") || cmd.contains("voce esta ai") || cmd.contains("você está ai") -> {
                 speak("Estou ativa em segundo plano.")

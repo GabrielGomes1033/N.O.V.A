@@ -62,6 +62,10 @@
 	<string>A NOVA usa a câmera para capturar fotos e anexar no chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>A NOVA pode acessar suas fotos para anexar no chat.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>A NOVA usa sua localização para responder comandos como clima local, onde fica e como chegar.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>A NOVA usa sua localização para responder comandos por voz e abrir rotas com contexto local.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

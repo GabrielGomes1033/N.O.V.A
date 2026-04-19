@@ -28,6 +28,15 @@ def _agora_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def saudacao_por_periodo(agora: datetime | None = None) -> str:
+    hora = (agora or datetime.now()).hour
+    if 5 <= hora < 12:
+        return "Bom dia"
+    if 12 <= hora < 18:
+        return "Boa tarde"
+    return "Boa noite"
+
+
 def _perfil_padrao() -> dict:
     return {
         "versao": 1,
@@ -340,6 +349,7 @@ def gerar_alertas_recomendacoes() -> list[dict]:
 def gerar_briefing_proativo(cidade: str = "") -> str:
     memoria = carregar_memoria_usuario()
     nome = str(memoria.get("nome_usuario", "")).strip() or "chefe"
+    saudacao = saudacao_por_periodo()
 
     clima = consultar_clima(cidade)
     mercado = formatar_cotacoes_humanas(cotacoes_financeiras())
@@ -347,7 +357,7 @@ def gerar_briefing_proativo(cidade: str = "") -> str:
     pendentes = [l for l in lembretes if not l.get("feito")]
 
     linhas = [
-        f"Bom dia, {nome}. Aqui está seu briefing:",
+        f"{saudacao}, {nome}. Aqui está seu briefing:",
         f"Clima: {clima}",
         f"Mercado: {mercado}",
     ]

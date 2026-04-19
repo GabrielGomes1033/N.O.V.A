@@ -245,6 +245,7 @@ def _normalizar_consulta_dirigida(consulta: str) -> str:
     if not c:
         return ""
 
+    motores_busca = r"(?:google|bing|duckduckgo|duck\s+duck\s+go|brave|serpapi)"
     padroes = (
         (
             r"^(?:na|no|em)\s+wikipedia\s+(?:sobre\s+)?(.+)$",
@@ -257,6 +258,14 @@ def _normalizar_consulta_dirigida(consulta: str) -> str:
         (
             r"^(.+?)\s+(?:na|no|em)\s+wikipedia$",
             lambda m: f"{m.group(1).strip()} wikipedia",
+        ),
+        (
+            rf"^(?:na|no|em)\s+{motores_busca}\s+(?:sobre\s+)?(.+)$",
+            lambda m: m.group(1).strip(),
+        ),
+        (
+            rf"^(.+?)\s+(?:na|no|em)\s+{motores_busca}$",
+            lambda m: m.group(1).strip(),
         ),
         (
             r"^(?:na|no|em)\s+(?:internet|web)\s+(?:sobre\s+)?(.+)$",

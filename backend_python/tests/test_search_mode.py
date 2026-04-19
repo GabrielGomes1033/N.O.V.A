@@ -15,6 +15,7 @@ from core.assistente_plus import (
     extrair_consulta_pesquisa_web,
     formatar_resposta_pesquisa,
 )
+from core.intent_classifier import classify_intent
 from core.nova_unica import orquestrar_consulta
 
 
@@ -30,6 +31,17 @@ class SearchModeTests(unittest.TestCase):
             "pesquise no Wikipedia LLM"
         )
         self.assertEqual(consulta, "LLM wikipedia")
+
+    def test_extrai_consulta_dirigida_para_google(self) -> None:
+        consulta = extrair_consulta_pesquisa_web(
+            "pesquise no Google sobre MCP"
+        )
+        self.assertEqual(consulta, "MCP")
+
+    def test_intent_classifier_limpa_alvo_google(self) -> None:
+        decision = classify_intent("pesquise LLM no google")
+        self.assertEqual(decision.tool_name, "search_web")
+        self.assertEqual(decision.params["query"], "LLM")
 
     def test_detecta_pedido_de_pesquisa_por_atualidade(self) -> None:
         self.assertTrue(

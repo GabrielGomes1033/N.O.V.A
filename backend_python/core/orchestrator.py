@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 import re
 from typing import Any
 
 from core.assistente_plus import adicionar_lembrete
+from core.google_calendar import create_google_calendar_event, parse_calendar_event_request
 from core.intent_classifier import IntentDecision, classify_intent
-from core.respostas import responder
+from core.respostas import detectar_intencao as detect_response_intent, responder
 from core.response_style import style_response
+from core.translation_service import (
+    language_label_pt,
+    parse_search_translation_request,
+    parse_text_translation_request,
+    translate_text,
+)
 from core.tools_registry import ToolsRegistry
 from integrations.brave_search import search_web as integration_search_web
 from integrations.home_assistant import control_home as integration_control_home
@@ -43,6 +51,31 @@ STOPWORDS = {
     "eu",
     "isso",
     "isto",
+}
+
+AFFIRMATIVE_REPLIES = {
+    "sim",
+    "s",
+    "ok",
+    "confirmo",
+    "pode",
+    "pode sim",
+    "yes",
+    "y",
+}
+
+NEGATIVE_REPLIES = {
+    "nao",
+    "não",
+    "n",
+    "cancelar",
+    "cancela",
+    "negativo",
+    "no",
+}
+
+TOOL_APPROVAL_PROMPTS = {
+    "schedule_calendar_event": "Posso agendar isso na sua Google Agenda, mas preciso da sua confirmacao.",
 }
 
 DEFAULT_TOOL_SCHEMAS = [
@@ -123,6 +156,20 @@ DEFAULT_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "schedule_calendar_event",
+            "description": "Agenda um evento ou tarefa na Google Agenda a partir de um pedido em linguagem natural.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request_text": {"type": "string"},
+                },
+                "required": ["request_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "summarize_text",
             "description": "Resume um texto de forma objetiva e clara.",
             "parameters": {
@@ -173,6 +220,34 @@ def _summarize_text(text: str) -> str:
     return _shorten(top or body, 260)
 
 
+def _approval_prompt(tool_name: str) -> str:
+    tool = str(tool_name or "").strip()
+    return TOOL_APPROVAL_PROMPTS.get(
+        tool,
+        f"Posso executar {tool}, mas preciso da sua confirmacao.",
+    )
+
+
+def _extract_named_fact(items: list[dict[str, Any]], label: str) -> str:
+    prefix = f"{label.lower()}:"
+    for item in items:
+        content = _normalize_text(str(item.get("content", "")))
+        if not content:
+            continue
+        lowered = content.lower()
+        if lowered.startswith(prefix):
+            return content[len(prefix) :].strip()
+    return ""
+
+
+def _is_affirmative_reply(text: str) -> bool:
+    return _normalize_text(text).lower() in AFFIRMATIVE_REPLIES
+
+
+def _is_negative_reply(text: str) -> bool:
+    return _normalize_text(text).lower() in NEGATIVE_REPLIES
+
+
 def _terms(text: str) -> set[str]:
     return {
         token
@@ -198,14 +273,44 @@ def _best_context_note(text: str, context: list[dict[str, Any]]) -> str:
     return _shorten(best_content, 160) if best_score > 0 else ""
 
 
+def _merge_memory_items(*groups: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group or []:
+            content = _normalize_text(str(item.get("content", "")))
+            key = content.lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(dict(item))
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
+def _should_use_semantic_context(text: str) -> bool:
+    terms = _terms(text)
+    if len(terms) >= 2:
+        return True
+    lowered = str(text or "").lower()
+    return any(token in lowered for token in ("lembra", "contexto", "projeto", "continua", "continue"))
+
+
 class RuleBasedLLM:
     def decide(self, text: str, context: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
         decision: IntentDecision = classify_intent(text)
         return asdict(decision)
 
-    def respond(self, text: str, context: list[dict[str, Any]], mode: str = "normal") -> str:
+    def respond(
+        self,
+        text: str,
+        context: list[dict[str, Any]],
+        mode: str = "normal",
+        response_context: dict[str, Any] | None = None,
+    ) -> str:
         context_hint = _best_context_note(text, context)
-        resposta_base = responder(text, contexto={})
+        resposta_base = responder(text, contexto=response_context or {})
         if context_hint and any(token in text.lower() for token in ("contexto", "continua", "projeto", "lembra")):
             resposta_base = f"{resposta_base}\nContexto util: {context_hint}"
         return style_response(resposta_base, modo=mode)
@@ -266,6 +371,23 @@ class RuleBasedLLM:
                     modo=mode,
                 )
             return style_response("Nao consegui criar esse projeto com seguranca agora.", modo=mode)
+
+        if tool_name == "schedule_calendar_event":
+            if ok:
+                title = str(result.get("title", "")).strip() or "Compromisso"
+                start_at = str(result.get("start_at", "")).strip().replace("T", " às ")
+                link = str(result.get("html_link", "")).strip()
+                assumptions = (result.get("parsed") or {}).get("assumptions") or []
+                lines = [f"Evento agendado na Google Agenda: {title} em {start_at}."]
+                if assumptions:
+                    lines.append("Observacoes: " + " ".join(str(item).strip() for item in assumptions if str(item).strip()))
+                if link:
+                    lines.append(f"Link: {link}")
+                return style_response("\n".join(lines), modo=mode)
+            message = str(result.get("message", "")).strip()
+            if message:
+                return style_response(message, modo=mode)
+            return style_response("Nao consegui agendar esse compromisso na Google Agenda.", modo=mode)
 
         if tool_name == "summarize_text":
             if ok:
@@ -343,6 +465,34 @@ def build_default_tools(memory_store: MemoryStore) -> ToolsRegistry:
             )
         return result
 
+    def schedule_calendar_event(request_text: str, user_id: str = "default") -> dict[str, Any]:
+        parsed = parse_calendar_event_request(request_text)
+        if not parsed.get("ok"):
+            return parsed
+
+        result = create_google_calendar_event(
+            title=str(parsed.get("title", "")).strip(),
+            start_at=str(parsed.get("start_at", "")).strip(),
+            end_at=str(parsed.get("end_at", "")).strip(),
+            description=str(parsed.get("description", "")).strip(),
+            calendar_id=str(parsed.get("calendar_id", "")).strip(),
+            timezone=str(parsed.get("timezone", "")).strip(),
+        )
+        payload = {**result, "parsed": parsed}
+        if result.get("ok"):
+            memory_store.save(
+                user_id=user_id,
+                category="agenda",
+                content=(
+                    f"Evento agendado na Google Agenda: {payload.get('title', '')} "
+                    f"em {payload.get('start_at', '')}"
+                ),
+                importance=3,
+                scope="sessao",
+                source="schedule_calendar_event",
+            )
+        return payload
+
     def summarize_text(text: str, user_id: str = "default") -> dict[str, Any]:
         return {"ok": True, "summary": _summarize_text(text)}
 
@@ -357,6 +507,7 @@ def build_default_tools(memory_store: MemoryStore) -> ToolsRegistry:
             "search_memory": search_memory,
             "create_reminder": create_reminder,
             "create_project": create_project,
+            "schedule_calendar_event": schedule_calendar_event,
             "summarize_text": summarize_text,
             "control_home": control_home,
         }[function_name]
@@ -364,7 +515,7 @@ def build_default_tools(memory_store: MemoryStore) -> ToolsRegistry:
             function_name,
             func,
             schema,
-            approval_required=function_name in {"control_home"},
+            approval_required=function_name in {"control_home", "schedule_calendar_event"},
         )
 
     return registry
@@ -384,7 +535,50 @@ class NovaOrchestrator:
         self.tools = tools
         self.llm = llm
         self.profile_store = profile_store or ProfileStore(memory)
-        self.vector_store = vector_store or VectorStore()
+        self.vector_store = vector_store or VectorStore(memory)
+        self._last_search_by_user: dict[str, dict[str, Any]] = {}
+        self._last_intent_by_user: dict[str, str] = {}
+        self._pending_translation_by_user: dict[str, dict[str, Any]] = {}
+
+    def _persist_last_search(
+        self,
+        user_id: str,
+        *,
+        prompt_text: str,
+        tool_result: dict[str, Any],
+        reply: str,
+    ) -> None:
+        payload = {
+            "prompt_text": _normalize_text(prompt_text),
+            "reply": str(reply or "").strip(),
+            "tool_result": dict(tool_result or {}),
+        }
+        self.memory.save(
+            user_id=user_id,
+            category="ultima_pesquisa_contexto",
+            content=json.dumps(payload, ensure_ascii=False),
+            importance=2,
+            scope="sessao",
+            source="search_web_state",
+        )
+
+    def _load_last_search_from_memory(self, user_id: str) -> dict[str, Any] | None:
+        uid = str(user_id or "").strip() or "default"
+        rows = self.memory.search_by_category(
+            user_id=uid,
+            category="ultima_pesquisa_contexto",
+            limit=1,
+        )
+        if not rows:
+            return None
+        raw = str(rows[0].get("content", "")).strip()
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _capture_profile_facts(self, user_id: str, text: str) -> None:
         msg = _normalize_text(text)
@@ -416,6 +610,11 @@ class NovaOrchestrator:
                 scope="sessao",
                 source="chat_user",
             )
+            self.vector_store.index_text(
+                user_id=user_id,
+                text=user_text,
+                metadata={"source": "user", "category": "contexto"},
+            )
         if assistant_text:
             self.memory.save(
                 user_id=user_id,
@@ -425,7 +624,341 @@ class NovaOrchestrator:
                 scope="sessao",
                 source="chat_assistant",
             )
-            self.vector_store.index_text(user_id=user_id, text=assistant_text, metadata={"source": "assistant"})
+            self.vector_store.index_text(
+                user_id=user_id,
+                text=assistant_text,
+                metadata={"source": "assistant", "category": "contexto"},
+            )
+
+    def _build_response_context(
+        self,
+        user_id: str,
+        *,
+        base_context: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        uid = str(user_id or "").strip() or "default"
+        profile_items = self.profile_store.summary(uid, limit=6)
+        nome_usuario = _extract_named_fact(profile_items, "Nome preferido")
+        tratamento = _extract_named_fact(profile_items, "Tratamento")
+        return {
+            "nome_usuario": nome_usuario,
+            "tratamento": tratamento,
+            "ultima_intencao": self._last_intent_by_user.get(uid, ""),
+            "contexto_recente": list(base_context or []),
+        }
+
+    def _build_combined_context(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        recent_limit: int = 8,
+        semantic_limit: int = 4,
+    ) -> list[dict[str, Any]]:
+        uid = str(user_id or "").strip() or "default"
+        recent = self.memory.search_recent(uid, limit=recent_limit)
+        if not _should_use_semantic_context(text):
+            return recent
+        semantic = self.vector_store.search(uid, text, limit=semantic_limit)
+        return _merge_memory_items(semantic, recent, limit=recent_limit + semantic_limit)
+
+    def _remember_last_intent(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        response_context: dict[str, Any] | None = None,
+    ) -> None:
+        uid = str(user_id or "").strip() or "default"
+        intent = detect_response_intent(text, contexto=response_context or {})
+        if intent and intent != "desconhecido":
+            self._last_intent_by_user[uid] = intent
+
+    def _remember_last_search(
+        self,
+        user_id: str,
+        *,
+        prompt_text: str,
+        tool_result: dict[str, Any],
+        reply: str,
+    ) -> None:
+        self._last_search_by_user[str(user_id or "").strip() or "default"] = {
+            "prompt_text": _normalize_text(prompt_text),
+            "reply": str(reply or "").strip(),
+            "tool_result": dict(tool_result or {}),
+        }
+        self._persist_last_search(
+            str(user_id or "").strip() or "default",
+            prompt_text=prompt_text,
+            tool_result=tool_result,
+            reply=reply,
+        )
+
+    def _offer_search_translation(self, user_id: str, reply: str) -> str:
+        uid = str(user_id or "").strip() or "default"
+        target_language = "pt"
+        target_label_pt = language_label_pt(target_language)
+        self._pending_translation_by_user[uid] = {
+            "kind": "search",
+            "target_language": target_language,
+            "target_label_pt": target_label_pt,
+        }
+        offer = (
+            f"Se quiser, eu tambem posso traduzir essa pesquisa para {target_label_pt}. "
+            "Responda sim ou nao."
+        )
+        return f"{str(reply or '').rstrip()}\n\n{offer}"
+
+    def _translate_last_search(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        target_language: str,
+        target_label_pt: str,
+        mode: str = "normal",
+    ) -> dict[str, Any]:
+        uid = str(user_id or "").strip() or "default"
+        self._pending_translation_by_user.pop(uid, None)
+        last_search = self._last_search_by_user.get(uid)
+        if not isinstance(last_search, dict) or not last_search.get("reply"):
+            last_search = self._load_last_search_from_memory(uid)
+        if not isinstance(last_search, dict) or not last_search.get("reply"):
+            reply = style_response(
+                "Posso traduzir a ultima pesquisa, mas ainda nao tenho uma pesquisa recente nesta conversa.",
+                modo=mode,
+            )
+            self._remember_turn(uid, text, reply)
+            return {
+                "reply": reply,
+                "decision_type": "response",
+                "approval_needed": False,
+                "tool_name": None,
+                "params": {},
+                "tool_result": {},
+                "context": self.memory.search_recent(uid, limit=8),
+            }
+
+        translatable_reply = re.sub(
+            r"^\s*Pesquisei e encontrei isto:\s*",
+            "",
+            str(last_search.get("reply", "")),
+            flags=re.IGNORECASE,
+        ).strip()
+        translation = translate_text(
+            translatable_reply,
+            target_language=target_language,
+        )
+        if not translation.get("ok"):
+            reply = style_response(
+                f"Nao consegui traduzir a ultima pesquisa para {target_label_pt} agora.",
+                modo=mode,
+            )
+            self._remember_turn(uid, text, reply)
+            return {
+                "reply": reply,
+                "decision_type": "response",
+                "approval_needed": False,
+                "tool_name": None,
+                "params": {},
+                "tool_result": translation,
+                "context": self.memory.search_recent(uid, limit=8),
+            }
+
+        translated_text = str(translation.get("translated_text", "")).strip()
+        reply = style_response(
+            f"Traducao da ultima pesquisa para {target_label_pt}:\n\n{translated_text}",
+            modo=mode,
+        )
+        self.memory.save(
+            user_id=uid,
+            category="pesquisa_traduzida",
+            content=f"Traducao de pesquisa para {target_language}: {_shorten(translated_text, 240)}",
+            importance=2,
+            scope="sessao",
+            source="translate_search",
+        )
+        self._remember_turn(uid, text, reply)
+        return {
+            "reply": reply,
+            "decision_type": "response",
+            "approval_needed": False,
+            "tool_name": None,
+            "params": {"target_language": target_language},
+            "tool_result": translation,
+            "context": self.memory.search_recent(uid, limit=8),
+        }
+
+    def _handle_search_translation(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        mode: str = "normal",
+    ) -> dict[str, Any] | None:
+        request = parse_search_translation_request(text)
+        if request is None:
+            return None
+
+        target_language = str(request.get("target_language", "")).strip() or "pt"
+        target_label_pt = str(request.get("target_label_pt", "")).strip() or target_language
+        return self._translate_last_search(
+            user_id,
+            text,
+            target_language=target_language,
+            target_label_pt=target_label_pt,
+            mode=mode,
+        )
+
+    def _handle_pending_translation_confirmation(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        mode: str = "normal",
+    ) -> dict[str, Any] | None:
+        uid = str(user_id or "").strip() or "default"
+        pending = self._pending_translation_by_user.get(uid)
+        if not isinstance(pending, dict) or not pending:
+            return None
+
+        if _is_negative_reply(text):
+            self._pending_translation_by_user.pop(uid, None)
+            reply = style_response(
+                "Tudo bem. Mantive a pesquisa no idioma original.",
+                modo=mode,
+            )
+            self._remember_turn(uid, text, reply)
+            return {
+                "reply": reply,
+                "decision_type": "response",
+                "approval_needed": False,
+                "tool_name": None,
+                "params": {},
+                "tool_result": {"ok": True, "cancelled": True},
+                "context": self.memory.search_recent(uid, limit=8),
+            }
+
+        if not _is_affirmative_reply(text):
+            self._pending_translation_by_user.pop(uid, None)
+            return None
+
+        if str(pending.get("kind", "")).strip() == "search":
+            return self._translate_last_search(
+                uid,
+                text,
+                target_language=str(pending.get("target_language", "")).strip() or "pt",
+                target_label_pt=str(pending.get("target_label_pt", "")).strip() or "portugues",
+                mode=mode,
+            )
+
+        self._pending_translation_by_user.pop(uid, None)
+        return None
+
+    def _handle_text_translation(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        mode: str = "normal",
+    ) -> dict[str, Any] | None:
+        request = parse_text_translation_request(text)
+        if request is None:
+            return None
+
+        uid = str(user_id or "").strip() or "default"
+        error = str(request.get("error", "")).strip()
+        if error == "target_language_missing":
+            reply = style_response(
+                'Posso traduzir texto, mas preciso do idioma de destino. Exemplo: traduza "Bom dia" para ingles.',
+                modo=mode,
+            )
+            self._remember_turn(uid, text, reply)
+            return {
+                "reply": reply,
+                "decision_type": "response",
+                "approval_needed": False,
+                "tool_name": None,
+                "params": {},
+                "tool_result": {"ok": False, "error": error},
+                "context": self.memory.search_recent(uid, limit=8),
+            }
+
+        if error == "source_text_missing":
+            target_label_pt = str(request.get("target_label_pt", "")).strip()
+            reply = style_response(
+                (
+                    f'Me mande o texto junto do pedido para eu traduzir para {target_label_pt}. '
+                    'Exemplo: traduza "Bom dia" para ingles.'
+                ),
+                modo=mode,
+            )
+            self._remember_turn(uid, text, reply)
+            return {
+                "reply": reply,
+                "decision_type": "response",
+                "approval_needed": False,
+                "tool_name": None,
+                "params": {},
+                "tool_result": {"ok": False, "error": error},
+                "context": self.memory.search_recent(uid, limit=8),
+            }
+
+        source_text = str(request.get("source_text", "")).strip()
+        target_language = str(request.get("target_language", "")).strip() or "pt"
+        target_label_pt = str(request.get("target_label_pt", "")).strip() or target_language
+        translation = translate_text(
+            source_text,
+            target_language=target_language,
+        )
+        if not translation.get("ok"):
+            reply = style_response(
+                f"Nao consegui traduzir esse texto para {target_label_pt} agora.",
+                modo=mode,
+            )
+            self._remember_turn(uid, text, reply)
+            return {
+                "reply": reply,
+                "decision_type": "response",
+                "approval_needed": False,
+                "tool_name": None,
+                "params": {
+                    "source_text": source_text,
+                    "target_language": target_language,
+                },
+                "tool_result": translation,
+                "context": self.memory.search_recent(uid, limit=8),
+            }
+
+        translated_text = str(translation.get("translated_text", "")).strip()
+        reply = style_response(
+            f"Traducao do texto para {target_label_pt}:\n\n{translated_text}",
+            modo=mode,
+        )
+        self.memory.save(
+            user_id=uid,
+            category="texto_traduzido",
+            content=(
+                f"Traducao de texto para {target_language}: "
+                f"{_shorten(source_text, 140)} -> {_shorten(translated_text, 140)}"
+            ),
+            importance=2,
+            scope="sessao",
+            source="translate_text",
+        )
+        self._remember_turn(uid, text, reply)
+        return {
+            "reply": reply,
+            "decision_type": "response",
+            "approval_needed": False,
+            "tool_name": None,
+            "params": {
+                "source_text": source_text,
+                "target_language": target_language,
+            },
+            "tool_result": translation,
+            "context": self.memory.search_recent(uid, limit=8),
+        }
 
     def execute_tool(
         self,
@@ -449,8 +982,23 @@ class NovaOrchestrator:
                 "context": self.memory.search_recent(uid, limit=8),
             }
 
-        context = self.memory.search_recent(uid, limit=8)
+        context = self._build_combined_context(uid, prompt_text or tool)
         result = self.tools.execute(tool, params or {}, user_id=uid)
+        if tool == "search_memory":
+            query = str((params or {}).get("query", "")).strip()
+            semantic_items = self.vector_store.search(uid, query, limit=4)
+            merged_items = _merge_memory_items(
+                result.get("items") or [],
+                semantic_items,
+                limit=6,
+            )
+            result = {
+                **result,
+                "items": merged_items,
+                "semantic_items": semantic_items,
+                "total": len(merged_items),
+            }
+        response_context = self._build_response_context(uid, base_context=context)
         reply = self.llm.respond_with_tool_result(
             prompt_text or tool,
             tool_name=tool,
@@ -458,7 +1006,28 @@ class NovaOrchestrator:
             context=context,
             mode=mode,
         )
+        if tool == "search_web" and bool(result.get("ok")):
+            self._remember_last_search(
+                uid,
+                prompt_text=prompt_text or tool,
+                tool_result=result,
+                reply=reply,
+            )
+            self.vector_store.index_text(
+                user_id=uid,
+                text=f"Pesquisa web sobre {result.get('query', '')}: {result.get('summary', '')}",
+                metadata={"source": "search_web", "category": "pesquisa"},
+            )
+            reply = self._offer_search_translation(uid, reply)
+        if tool == "schedule_calendar_event" and bool(result.get("ok")):
+            self.vector_store.index_text(
+                user_id=uid,
+                text=f"Evento agendado: {result.get('title', '')} em {result.get('start_at', '')}",
+                metadata={"source": "google_calendar", "category": "agenda"},
+            )
         self._remember_turn(uid, prompt_text or tool, reply)
+        if prompt_text:
+            self._remember_last_intent(uid, prompt_text, response_context=response_context)
         return {
             "reply": reply,
             "decision_type": "tool_call",
@@ -466,7 +1035,7 @@ class NovaOrchestrator:
             "tool_name": tool,
             "params": params or {},
             "tool_result": result,
-            "context": self.memory.search_recent(uid, limit=8),
+            "context": self._build_combined_context(uid, prompt_text or tool),
         }
 
     def handle(
@@ -491,7 +1060,17 @@ class NovaOrchestrator:
             }
 
         self._capture_profile_facts(uid, msg)
-        context = self.memory.search_recent(uid, limit=8)
+        translated_offer = self._handle_pending_translation_confirmation(uid, msg, mode=mode)
+        if translated_offer is not None:
+            return translated_offer
+        translated_search = self._handle_search_translation(uid, msg, mode=mode)
+        if translated_search is not None:
+            return translated_search
+        translated_text = self._handle_text_translation(uid, msg, mode=mode)
+        if translated_text is not None:
+            return translated_text
+        context = self._build_combined_context(uid, msg)
+        response_context = self._build_response_context(uid, base_context=context)
 
         decision = self.llm.decide(
             text=msg,
@@ -505,7 +1084,7 @@ class NovaOrchestrator:
             if self.tools.requires_approval(tool_name) and not auto_approve:
                 return {
                     "reply": style_response(
-                        f"Posso executar {tool_name}, mas preciso da sua confirmacao.",
+                        _approval_prompt(tool_name),
                         modo=mode,
                     ),
                     "decision_type": "tool_call",
@@ -523,8 +1102,14 @@ class NovaOrchestrator:
                 mode=mode,
             )
 
-        final_reply = self.llm.respond(msg, context=context, mode=mode)
+        final_reply = self.llm.respond(
+            msg,
+            context=context,
+            mode=mode,
+            response_context=response_context,
+        )
         self._remember_turn(uid, msg, final_reply)
+        self._remember_last_intent(uid, msg, response_context=response_context)
         return {
             "reply": final_reply,
             "decision_type": "response",
@@ -532,7 +1117,7 @@ class NovaOrchestrator:
             "tool_name": None,
             "params": {},
             "tool_result": {},
-            "context": self.memory.search_recent(uid, limit=8),
+            "context": self._build_combined_context(uid, msg),
         }
 
 
