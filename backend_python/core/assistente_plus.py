@@ -38,7 +38,16 @@ def aprender_gostos_por_mensagem(msg: str) -> None:
         return
 
     mapa_topicos = {
-        "programacao": ["python", "java", "javascript", "api", "codigo", "programa", "flutter", "backend"],
+        "programacao": [
+            "python",
+            "java",
+            "javascript",
+            "api",
+            "codigo",
+            "programa",
+            "flutter",
+            "backend",
+        ],
         "ia": ["ia", "inteligencia artificial", "agente", "llm", "openai", "modelo"],
         "financas": ["mercado", "acao", "ações", "dolar", "euro", "bitcoin", "ethereum", "cripto"],
         "clima": ["clima", "tempo", "chuva", "temperatura"],
@@ -78,7 +87,11 @@ def resumo_adaptacao_usuario() -> str:
     favoritos = memoria.get("topicos_favoritos", [])
     if not isinstance(favoritos, list) or not favoritos:
         return "Ainda estou entendendo seus gostos."
-    return "Estou me adaptando ao seu estilo. Seus tópicos favoritos recentes: " + ", ".join(favoritos[:5]) + "."
+    return (
+        "Estou me adaptando ao seu estilo. Seus tópicos favoritos recentes: "
+        + ", ".join(favoritos[:5])
+        + "."
+    )
 
 
 def _strip_tags(texto_html: str) -> str:
@@ -148,7 +161,106 @@ def _termos_relevantes_consulta(consulta: str) -> set[str]:
     return {t for t in _tokens(consulta) if len(t) >= 3 and t not in stopwords}
 
 
-def _pontuar_resultado_web(item: dict, termos: set[str]) -> int:
+def _classificar_consulta_web(consulta: str) -> str:
+    texto = _normalizar_ascii(_limpar(consulta))
+    tokens = _tokens(texto)
+    if not texto:
+        return "general"
+    if any(
+        t in texto
+        for t in (
+            "ultima",
+            "ultimas",
+            "ultimo",
+            "ultimos",
+            "recente",
+            "recentes",
+            "hoje",
+            "agora",
+            "atualizado",
+        )
+    ):
+        return "recency"
+    if any(
+        t in texto
+        for t in ("diferenca entre", "diferenca", "compare", "comparar", " vs ", " versus ")
+    ):
+        return "comparison"
+    if any(
+        t in tokens
+        for t in {
+            "api",
+            "python",
+            "java",
+            "javascript",
+            "flutter",
+            "backend",
+            "frontend",
+            "llm",
+            "sdk",
+            "framework",
+            "erro",
+            "bug",
+            "docs",
+            "documentacao",
+            "documentação",
+        }
+    ):
+        return "technical"
+    if texto.startswith(("quem ", "o que ", "qual ", "quais ", "como funciona", "como usar")):
+        return "factual"
+    return "general"
+
+
+def _consulta_tem_foco_suficiente(consulta: str) -> bool:
+    texto = _normalizar_ascii(_limpar(consulta))
+    if not texto:
+        return False
+
+    bloqueios = {
+        "isso",
+        "isso ai",
+        "isso aqui",
+        "aquilo",
+        "aquilo la",
+        "mais sobre isso",
+        "mais sobre aquilo",
+        "me ajuda com isso",
+        "me explica isso",
+        "me explique isso",
+        "esse assunto",
+        "essa pergunta",
+        "esse tema",
+    }
+    if texto in bloqueios:
+        return False
+
+    termos = _termos_relevantes_consulta(texto)
+    if termos:
+        return True
+
+    tokens = re.findall(r"[a-z0-9à-ÿ]+", texto)
+    return len(tokens) >= 3 and not texto.startswith(("me ", "isso ", "mais "))
+
+
+def _normalizar_consulta_comparativa(consulta: str) -> str:
+    c = _limpar(consulta).strip(" :,-?")
+    if not c:
+        return ""
+
+    for separador in (" versus ", " vs ", " e ", " ou "):
+        if separador in c.lower():
+            partes = [
+                parte.strip(" ,.-")
+                for parte in re.split(separador, c, flags=re.IGNORECASE)
+                if parte.strip(" ,.-")
+            ]
+            if len(partes) >= 2:
+                return " vs ".join(partes[:3])
+    return c
+
+
+def _pontuar_resultado_web(item: dict, termos: set[str], consulta: str = "") -> int:
     if not isinstance(item, dict):
         return -1
     titulo = _limpar(str(item.get("title", ""))).lower()
@@ -166,22 +278,47 @@ def _pontuar_resultado_web(item: dict, termos: set[str]) -> int:
     titulo_n = _normalizar_ascii(titulo)
     snippet_n = _normalizar_ascii(snippet)
     domain_n = _normalizar_ascii(domain)
+    consulta_n = _normalizar_ascii(_limpar(consulta))
+    categoria = _classificar_consulta_web(consulta)
     termos_n = {_normalizar_ascii(t) for t in termos}
     if termos:
+        hits_titulo = 0
+        hits_corpo = 0
         for termo in termos_n:
             if termo in titulo_n:
                 score += 4
                 houve_match = True
+                hits_titulo += 1
             elif termo in snippet_n:
                 score += 2
                 houve_match = True
+                hits_corpo += 1
             elif termo in domain_n:
                 score += 1
                 houve_match = True
         if not houve_match:
             return 0
+
+        cobertura_titulo = hits_titulo / max(1, len(termos_n))
+        cobertura_total = (hits_titulo + hits_corpo) / max(1, len(termos_n))
+        if cobertura_titulo >= 0.6:
+            score += 4
+        elif cobertura_total >= 0.75:
+            score += 3
+        elif len(termos_n) >= 3 and cobertura_total < 0.34:
+            score -= 2
     else:
         score += 1
+
+    if consulta_n:
+        if titulo_n == consulta_n:
+            score += 8
+        elif titulo_n.startswith(consulta_n):
+            score += 5
+        elif consulta_n in titulo_n:
+            score += 4
+        elif consulta_n in snippet_n:
+            score += 2
 
     # Evita snippets longos/poluídos ganharem prioridade.
     tam_snippet = len(snippet)
@@ -189,6 +326,47 @@ def _pontuar_resultado_web(item: dict, termos: set[str]) -> int:
         score += 2
     elif tam_snippet > 320:
         score -= 1
+
+    if categoria == "technical":
+        if any(
+            hint in domain_n
+            for hint in (
+                "docs.",
+                "developer.",
+                "developers.",
+                "readthedocs",
+                "github.com",
+                "stackoverflow.com",
+                "python.org",
+                "mozilla.org",
+                "fastapi.tiangolo.com",
+            )
+        ):
+            score += 4
+    elif categoria == "factual":
+        if "wikipedia.org" in domain_n:
+            score += 3
+        if domain_n.endswith(".gov") or domain_n.endswith(".edu"):
+            score += 2
+    elif categoria == "recency":
+        if any(
+            hint in domain_n
+            for hint in (
+                "news",
+                "noticias",
+                "g1.globo.com",
+                "bbc.com",
+                "reuters.com",
+                "theverge.com",
+                "techcrunch.com",
+            )
+        ):
+            score += 3
+    elif categoria == "comparison":
+        if "wikipedia.org" in domain_n or any(
+            hint in domain_n for hint in ("docs.", "developer.", "github.com", "stackoverflow.com")
+        ):
+            score += 2
 
     return score
 
@@ -199,7 +377,7 @@ def _organizar_resultados_web(resultados: list[dict], consulta: str) -> list[dic
     termos = _termos_relevantes_consulta(consulta)
     enriquecidos: list[tuple[int, int, dict]] = []
     for idx, item in enumerate(resultados):
-        score = _pontuar_resultado_web(item, termos)
+        score = _pontuar_resultado_web(item, termos, consulta=consulta)
         if score < 0:
             continue
         if termos and score == 0:
@@ -287,14 +465,26 @@ def extrair_consulta_pesquisa_web(mensagem: str) -> str:
     if not texto:
         return ""
 
+    texto = re.sub(r"\b(?:por favor|pra mim|para mim)\b", " ", texto, flags=re.IGNORECASE)
+    texto = _limpar(texto)
+    eh_comparacao = bool(
+        re.search(
+            r"\b(?:qual a diferenca entre|qual a diferença entre|diferenca entre|diferença entre|compare|comparar|versus|vs)\b",
+            texto,
+            flags=re.IGNORECASE,
+        )
+    )
+
     padroes = (
         r"^(?:\/google)\s+",
         r"^(?:pesquise|pesquisar|procure|procurar|busque|buscar)\s+(?:na internet\s+)?(?:sobre\s+)?",
+        r"^(?:pode(?:ria)?\s+me\s+explicar|voce\s+consegue\s+explicar|você\s+consegue\s+explicar)\s+",
         r"^(?:me explique|explique|explica)\s+",
-        r"^(?:me fale sobre|fale sobre|quero saber sobre)\s+",
+        r"^(?:me fale sobre|fale sobre|quero saber sobre|queria saber sobre|quero entender|quero entender mais sobre)\s+",
+        r"^(?:me diga|me conte|me mostra|me mostre)\s+",
         r"^(?:me atualize sobre|atualize sobre|ultimas noticias sobre|últimas notícias sobre|noticias sobre|notícias sobre)\s+",
         r"^(?:qual a diferenca entre|qual a diferença entre|diferenca entre|diferença entre|compare)\s+",
-        r"^(?:o que e|o que é|quem e|quem é|qual e|qual é|como funciona)\s+",
+        r"^(?:o que significa|o que quer dizer|o que e|o que é|quem e|quem é|qual e|qual é|como funciona|como usar)\s+",
     )
 
     consulta = texto
@@ -308,7 +498,13 @@ def extrair_consulta_pesquisa_web(mensagem: str) -> str:
                 houve_mudanca = True
                 break
 
-    return _consulta_base(_normalizar_consulta_dirigida(consulta.strip(" ?"))) if consulta else ""
+    consulta = _normalizar_consulta_dirigida(consulta.strip(" ?")) if consulta else ""
+    consulta = _consulta_base(consulta)
+    consulta = re.sub(r"^(?:o|a|os|as)\s+", "", consulta, flags=re.IGNORECASE).strip()
+    if eh_comparacao:
+        consulta = _normalizar_consulta_comparativa(consulta)
+    consulta = _limpar(consulta.strip(" :,-?"))
+    return consulta if _consulta_tem_foco_suficiente(consulta) else ""
 
 
 def mensagem_vale_pesquisa_web(mensagem: str) -> bool:
@@ -340,8 +536,13 @@ def mensagem_vale_pesquisa_web(mensagem: str) -> bool:
 
     bloqueios_trechos = (
         "seu nome",
+        "qual seu nome",
+        "qual o seu nome",
         "quem voce e",
         "quem você e",
+        "quem sou eu",
+        "o que voce lembra",
+        "o que você lembra",
         "como voce esta",
         "como você esta",
         "que horas",
@@ -359,6 +560,7 @@ def deve_acionar_pesquisa_web(mensagem: str, modo_pesquisa: bool = False) -> boo
         return False
 
     texto = _normalizar_ascii(_limpar(mensagem))
+    consulta = extrair_consulta_pesquisa_web(mensagem)
     tokens = re.findall(r"[a-z0-9]+", texto)
 
     gatilhos_explicitos = (
@@ -386,7 +588,10 @@ def deve_acionar_pesquisa_web(mensagem: str, modo_pesquisa: bool = False) -> boo
         "qual e",
     )
     if any(gatilho in texto for gatilho in gatilhos_explicitos):
-        return True
+        return bool(consulta)
+
+    if not _consulta_tem_foco_suficiente(consulta):
+        consulta = _consulta_base(_limpar(mensagem))
 
     interrogativos_factuais = (
         "quem ",
@@ -401,13 +606,24 @@ def deve_acionar_pesquisa_web(mensagem: str, modo_pesquisa: bool = False) -> boo
         "por que ",
         "porque ",
     )
-    if texto.startswith(interrogativos_factuais) and len(tokens) >= 3:
+    if (
+        texto.startswith(interrogativos_factuais)
+        and len(tokens) >= 3
+        and _consulta_tem_foco_suficiente(consulta)
+    ):
         return True
 
-    if any(t in texto for t in ("hoje", "agora", "atual", "atualizado", "recente", "ultimos", "ultimas")):
+    if any(
+        t in texto
+        for t in ("hoje", "agora", "atual", "atualizado", "recente", "ultimos", "ultimas")
+    ) and _consulta_tem_foco_suficiente(consulta):
         return True
 
-    if modo_pesquisa and (("?" in (mensagem or "")) or len(tokens) >= 5):
+    if (
+        modo_pesquisa
+        and _consulta_tem_foco_suficiente(consulta)
+        and (("?" in (mensagem or "")) or len(tokens) >= 5)
+    ):
         return True
 
     return False
@@ -498,11 +714,7 @@ def _buscar_brave_web(consulta: str, limit: int = 5) -> list[dict]:
     except Exception:
         return []
 
-    results = (
-        data.get("web", {}).get("results", [])
-        if isinstance(data, dict)
-        else []
-    )
+    results = data.get("web", {}).get("results", []) if isinstance(data, dict) else []
     if not isinstance(results, list):
         return []
 
@@ -743,7 +955,9 @@ def pesquisar_na_internet(consulta: str) -> dict:
         if abstract:
             prefixo = f"{heading}: " if heading else ""
             candidato = _resumir_texto(prefixo + abstract, limite=280)
-            score = _pontuar_resultado_web({"title": heading, "snippet": abstract, "domain": ""}, termos_consulta)
+            score = _pontuar_resultado_web(
+                {"title": heading, "snippet": abstract, "domain": ""}, termos_consulta
+            )
             if score > 0 or not termos_consulta:
                 resumo_rapido = candidato
                 fontes.append("DuckDuckGo")
@@ -762,7 +976,9 @@ def pesquisar_na_internet(consulta: str) -> dict:
                         break
             if itens:
                 candidato = _resumir_texto("; ".join(itens[:3]), limite=260)
-                score = _pontuar_resultado_web({"title": "", "snippet": candidato, "domain": ""}, termos_consulta)
+                score = _pontuar_resultado_web(
+                    {"title": "", "snippet": candidato, "domain": ""}, termos_consulta
+                )
                 if score > 0 or not termos_consulta:
                     resumo_rapido = candidato
                     fontes.append("DuckDuckGo")
@@ -879,7 +1095,17 @@ def pesquisar_na_internet(consulta: str) -> dict:
             fontes.append("GitHub")
 
     # 5) Música
-    music_tokens = {"musica", "música", "musicas", "músicas", "cantor", "banda", "album", "álbum", "playlist"}
+    music_tokens = {
+        "musica",
+        "música",
+        "musicas",
+        "músicas",
+        "cantor",
+        "banda",
+        "album",
+        "álbum",
+        "playlist",
+    }
     if any(t in tk for t in music_tokens):
         tracks = _buscar_itunes_musica(consulta_base, limit=4)
         if tracks:
@@ -887,7 +1113,22 @@ def pesquisar_na_internet(consulta: str) -> dict:
             fontes.append("iTunes")
 
     # 6) Finanças
-    finance_tokens = {"acao", "ações", "bolsa", "dolar", "dólar", "euro", "bitcoin", "ethereum", "cripto", "financa", "finanças", "mercado", "cotacao", "cotação"}
+    finance_tokens = {
+        "acao",
+        "ações",
+        "bolsa",
+        "dolar",
+        "dólar",
+        "euro",
+        "bitcoin",
+        "ethereum",
+        "cripto",
+        "financa",
+        "finanças",
+        "mercado",
+        "cotacao",
+        "cotação",
+    }
     if any(t in tk for t in finance_tokens):
         cot = cotacoes_financeiras()
         if cot.get("ok"):
@@ -974,7 +1215,10 @@ def formatar_resposta_pesquisa(resultado: dict, max_fontes: int = 6, max_links: 
     links_raw = resultado.get("links", [])
     links = _dedupe_ordem([str(x) for x in links_raw if str(x).strip()])[: max(1, max_links)]
     if links:
-        partes.append("Se quiser se aprofundar:\n" + "\n".join(f"{i}. {u}" for i, u in enumerate(links, start=1)))
+        partes.append(
+            "Se quiser se aprofundar:\n"
+            + "\n".join(f"{i}. {u}" for i, u in enumerate(links, start=1))
+        )
 
     texto = "\n\n".join(p for p in partes if p.strip())
     texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
@@ -993,7 +1237,9 @@ def cotacoes_financeiras() -> dict:
     }
 
     try:
-        fx = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", timeout=TIMEOUT_PADRAO)
+        fx = requests.get(
+            "https://api.frankfurter.app/latest?from=USD&to=BRL", timeout=TIMEOUT_PADRAO
+        )
         fx.raise_for_status()
         d = fx.json()
         resultado["dolar_brl"] = float(d.get("rates", {}).get("BRL"))
@@ -1002,7 +1248,9 @@ def cotacoes_financeiras() -> dict:
         pass
 
     try:
-        fx = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", timeout=TIMEOUT_PADRAO)
+        fx = requests.get(
+            "https://api.frankfurter.app/latest?from=EUR&to=BRL", timeout=TIMEOUT_PADRAO
+        )
         fx.raise_for_status()
         d = fx.json()
         resultado["euro_brl"] = float(d.get("rates", {}).get("BRL"))
@@ -1024,7 +1272,14 @@ def cotacoes_financeiras() -> dict:
     except Exception:
         pass
 
-    if not any([resultado["dolar_brl"], resultado["euro_brl"], resultado["bitcoin_usd"], resultado["ethereum_usd"]]):
+    if not any(
+        [
+            resultado["dolar_brl"],
+            resultado["euro_brl"],
+            resultado["bitcoin_usd"],
+            resultado["ethereum_usd"],
+        ]
+    ):
         return {"ok": False, "error": "sem_dados"}
 
     return resultado

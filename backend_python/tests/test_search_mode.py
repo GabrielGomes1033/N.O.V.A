@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.assistente_plus import (
+    _organizar_resultados_web,
     deve_acionar_pesquisa_web,
     extrair_consulta_pesquisa_web,
     formatar_resposta_pesquisa,
@@ -21,21 +22,15 @@ from core.nova_unica import orquestrar_consulta
 
 class SearchModeTests(unittest.TestCase):
     def test_extrai_consulta_de_frase_natural_encadeada(self) -> None:
-        consulta = extrair_consulta_pesquisa_web(
-            "Me explique como funciona o protocolo MCP?"
-        )
-        self.assertEqual(consulta, "o protocolo MCP")
+        consulta = extrair_consulta_pesquisa_web("Me explique como funciona o protocolo MCP?")
+        self.assertEqual(consulta, "protocolo MCP")
 
     def test_extrai_consulta_dirigida_para_wikipedia(self) -> None:
-        consulta = extrair_consulta_pesquisa_web(
-            "pesquise no Wikipedia LLM"
-        )
+        consulta = extrair_consulta_pesquisa_web("pesquise no Wikipedia LLM")
         self.assertEqual(consulta, "LLM wikipedia")
 
     def test_extrai_consulta_dirigida_para_google(self) -> None:
-        consulta = extrair_consulta_pesquisa_web(
-            "pesquise no Google sobre MCP"
-        )
+        consulta = extrair_consulta_pesquisa_web("pesquise no Google sobre MCP")
         self.assertEqual(consulta, "MCP")
 
     def test_intent_classifier_limpa_alvo_google(self) -> None:
@@ -44,16 +39,41 @@ class SearchModeTests(unittest.TestCase):
         self.assertEqual(decision.params["query"], "LLM")
 
     def test_detecta_pedido_de_pesquisa_por_atualidade(self) -> None:
-        self.assertTrue(
-            deve_acionar_pesquisa_web(
-                "Quais as últimas notícias sobre agentes de IA?"
-            )
-        )
+        self.assertTrue(deve_acionar_pesquisa_web("Quais as últimas notícias sobre agentes de IA?"))
 
     def test_detecta_pergunta_factual_sem_ativacao(self) -> None:
-        self.assertTrue(
-            deve_acionar_pesquisa_web("Quem descobriu o Brasil")
+        self.assertTrue(deve_acionar_pesquisa_web("Quem descobriu o Brasil"))
+
+    def test_extrai_consulta_comparativa_com_vs(self) -> None:
+        consulta = extrair_consulta_pesquisa_web("Qual a diferença entre FastAPI e Flask?")
+        self.assertEqual(consulta, "FastAPI vs Flask")
+
+    def test_nao_aciona_pesquisa_para_pergunta_pessoal_da_assistente(self) -> None:
+        self.assertFalse(deve_acionar_pesquisa_web("Qual o seu nome?"))
+
+    def test_modo_pesquisa_nao_forca_busca_para_pedido_vago(self) -> None:
+        self.assertFalse(deve_acionar_pesquisa_web("me ajuda com isso", modo_pesquisa=True))
+
+    def test_prioriza_documentacao_oficial_em_consulta_tecnica(self) -> None:
+        ordenados = _organizar_resultados_web(
+            [
+                {
+                    "title": "Tutorial completo de FastAPI",
+                    "snippet": "Um guia genérico com várias dicas de framework.",
+                    "domain": "blog-exemplo.dev",
+                    "url": "https://blog-exemplo.dev/fastapi",
+                },
+                {
+                    "title": "Dependencies - FastAPI",
+                    "snippet": "Official FastAPI documentation about dependency injection.",
+                    "domain": "fastapi.tiangolo.com",
+                    "url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
+                },
+            ],
+            "FastAPI dependency injection",
         )
+
+        self.assertEqual(ordenados[0]["domain"], "fastapi.tiangolo.com")
 
     def test_nao_aciona_pesquisa_para_conversa_curta(self) -> None:
         self.assertFalse(deve_acionar_pesquisa_web("Oi, tudo bem?"))

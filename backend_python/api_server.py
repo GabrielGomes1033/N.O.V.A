@@ -26,7 +26,12 @@ from core.admin import (
     rotacionar_segredo_2fa,
     status_admin,
 )
-from core.agente import eh_pedido_de_agente, executar_agente, processar_confirmacao_agente, planejar_objetivo
+from core.agente import (
+    eh_pedido_de_agente,
+    executar_agente,
+    processar_confirmacao_agente,
+    planejar_objetivo,
+)
 from core.despertador import (
     configurar_despertador,
     desativar_despertador,
@@ -44,7 +49,12 @@ from core.jarvis_fase2 import (
     relatorio_agora,
     status_fase2,
 )
-from core.backup_drive import criar_projeto_drive, restaurar_backup_drive, sincronizar_backup_drive, status_backup_drive
+from core.backup_drive import (
+    criar_projeto_drive,
+    restaurar_backup_drive,
+    sincronizar_backup_drive,
+    status_backup_drive,
+)
 from core.assistente_plus import (
     adicionar_lembrete,
     aprender_gostos_por_mensagem,
@@ -52,6 +62,7 @@ from core.assistente_plus import (
     consultar_clima,
     consultar_clima_por_coordenadas,
     cotacoes_financeiras,
+    extrair_consulta_pesquisa_web,
     formatar_cotacoes_humanas,
     formatar_resposta_pesquisa,
     listar_lembretes,
@@ -83,7 +94,12 @@ from core.aprendizado_admin import (
     listar_aprendizados,
     salvar_aprendizado as salvar_aprendizado_admin,
 )
-from core.memoria import carregar_memoria_usuario, formatar_memoria_usuario, salvar_memoria_usuario, registrar_interacao_usuario
+from core.memoria import (
+    carregar_memoria_usuario,
+    formatar_memoria_usuario,
+    salvar_memoria_usuario,
+    registrar_interacao_usuario,
+)
 from core.painel_admin import (
     adicionar_usuario,
     atualizar_config_painel,
@@ -93,9 +109,19 @@ from core.painel_admin import (
     remover_usuario,
 )
 from core.pesquisa import gerar_pesquisa_wikipedia
-from core.respostas import carregar_aprendizado, detectar_intencao, extrair_nome_usuario, responder, salvar_aprendizado
+from core.respostas import (
+    carregar_aprendizado,
+    detectar_intencao,
+    extrair_nome_usuario,
+    responder,
+    salvar_aprendizado,
+)
 from core.telegram_envio import enviar_mensagem_telegram
-from core.security_audit import auditoria_humana, executar_auditoria_seguranca, obter_historico_auditoria
+from core.security_audit import (
+    auditoria_humana,
+    executar_auditoria_seguranca,
+    obter_historico_auditoria,
+)
 from core.premium_memory import (
     aprender_de_mensagem as premium_aprender,
     atualizar_perfil as premium_atualizar_perfil,
@@ -104,7 +130,12 @@ from core.premium_memory import (
     obter_perfil as premium_obter_perfil,
     personalizar_resposta_por_contexto as premium_personalizar_resposta,
 )
-from core.rag_local import consultar_rag, reindexar_documentos, registrar_feedback_rag, estatisticas_feedback_rag
+from core.rag_local import (
+    consultar_rag,
+    reindexar_documentos,
+    registrar_feedback_rag,
+    estatisticas_feedback_rag,
+)
 from core.automacoes_seguras import (
     adicionar_rotina,
     detectar_rotina_disparada,
@@ -125,7 +156,11 @@ from core.autonomia_runtime import (
     status_autonomia,
     status_sistema_detalhado,
 )
-from core.session_audit import listar_auditoria_sessao, validar_cadeia_auditoria, registrar_evento_sessao
+from core.session_audit import (
+    listar_auditoria_sessao,
+    validar_cadeia_auditoria,
+    registrar_evento_sessao,
+)
 from core.ops_status import status_operacional
 from core.document_analysis import analisar_documento_base64
 from core.approval_flow import listar_aprovacoes, decidir_aprovacao
@@ -145,7 +180,12 @@ from routes.knowledge_routes import (
     handle_knowledge_post,
     handle_knowledge_put,
 )
-from integrations.maps_provider import gerar_link_busca_maps, gerar_link_rota_maps, reverse_geocode, search_places
+from integrations.maps_provider import (
+    gerar_link_busca_maps,
+    gerar_link_rota_maps,
+    reverse_geocode,
+    search_places,
+)
 
 
 def _novo_contexto():
@@ -165,7 +205,13 @@ def _novo_contexto():
 
 
 CONTEXTO = _novo_contexto()
-API_TTS_SERVIDOR_ATIVO = os.getenv("NOVA_API_SERVER_TTS", "0").strip().lower() in {"1", "true", "on", "sim", "yes"}
+API_TTS_SERVIDOR_ATIVO = os.getenv("NOVA_API_SERVER_TTS", "0").strip().lower() in {
+    "1",
+    "true",
+    "on",
+    "sim",
+    "yes",
+}
 
 OPTIONAL_RUNTIME_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 INPUT_PARSE_ERRORS = (TypeError, ValueError)
@@ -306,12 +352,14 @@ def _responder_busca_mapa(consulta: str, modo: str = "busca") -> str:
         lat_num = float(lat) if str(lat).strip() else None
     except (ValueError, TypeError):
         from core.logger import logger
+
         logger.warning("invalid_lat", lat=str(lat))
         lat_num = None
     try:
         lon_num = float(lon) if str(lon).strip() else None
     except (ValueError, TypeError):
         from core.logger import logger
+
         logger.warning("invalid_lon", lon=str(lon))
         lon_num = None
     resultado = search_places(consulta_limpa, latitude=lat_num, longitude=lon_num, limit=3)
@@ -322,7 +370,9 @@ def _responder_busca_mapa(consulta: str, modo: str = "busca") -> str:
         endereco = str(item.get("display_name", "")).strip()
         link_item = str(item.get("maps_url", "")).strip() or link
         if modo == "rota":
-            link = gerar_link_rota_maps(nome or consulta_limpa, latitude=str(lat or ""), longitude=str(lon or ""))
+            link = gerar_link_rota_maps(
+                nome or consulta_limpa, latitude=str(lat or ""), longitude=str(lon or "")
+            )
             if endereco:
                 return f"{nome or consulta_limpa} fica em {endereco}. Rota pronta no mapa: {link}"
             return f"Montei a rota para {nome or consulta_limpa}. Mapa: {link}"
@@ -343,7 +393,7 @@ def _exemplos_criacao_projeto() -> str:
         "- Nova, crie um novo projeto chamado Atlas Comercial\n"
         "- Nova, abre um projeto novo CRM Interno\n"
         "- Nova, crie um projeto chamado Atlas Comercial na área Comercial com prioridade Alta\n"
-        "- Novo projeto \"Planejamento Q4\"\n"
+        '- Novo projeto "Planejamento Q4"\n'
         "- /projeto Assistente Financeiro IA\n"
         "- /notion projeto Roadmap 2026"
     )
@@ -414,7 +464,15 @@ def _cmd_admin(texto):
         CONTEXTO["admin_usuario"] = ""
         return "Sessão admin encerrada."
 
-    if acao in {"status", "explicar", "configurar", "despertador", "jarvis2", "drivebackup", "2fa"} and not CONTEXTO.get("admin_autenticado"):
+    if acao in {
+        "status",
+        "explicar",
+        "configurar",
+        "despertador",
+        "jarvis2",
+        "drivebackup",
+        "2fa",
+    } and not CONTEXTO.get("admin_autenticado"):
         return "Comando restrito. Faça /admin login primeiro."
 
     if acao == "status":
@@ -462,7 +520,9 @@ def _cmd_admin(texto):
                 cfg = carregar_config_admin()
                 cfg["admin_2fa_required"] = True
                 salvar_json_seguro(ARQUIVO_ADMIN, cfg)
-                registrar_evento_sessao("2fa_required_on", usuario=str(cfg.get("usuario_admin", "")), ok=True)
+                registrar_evento_sessao(
+                    "2fa_required_on", usuario=str(cfg.get("usuario_admin", "")), ok=True
+                )
                 return "2FA obrigatório ativado para login admin."
             if flag in {"off", "desligar", "nao", "não", "false", "0"}:
                 from core.admin import carregar_config_admin
@@ -472,7 +532,9 @@ def _cmd_admin(texto):
                 cfg = carregar_config_admin()
                 cfg["admin_2fa_required"] = False
                 salvar_json_seguro(ARQUIVO_ADMIN, cfg)
-                registrar_evento_sessao("2fa_required_off", usuario=str(cfg.get("usuario_admin", "")), ok=True)
+                registrar_evento_sessao(
+                    "2fa_required_off", usuario=str(cfg.get("usuario_admin", "")), ok=True
+                )
                 return "2FA obrigatório desativado."
             return "Valor inválido. Use on|off."
         return "Subcomando 2FA inválido."
@@ -494,7 +556,9 @@ def _cmd_admin(texto):
             hora = partes[3]
             cidade = partes[4] if len(partes) >= 5 else None
             nome = " ".join(partes[5:]) if len(partes) >= 6 else None
-            ok, msg = configurar_despertador(hora=hora, cidade=cidade, saudacao_nome=nome, ativo=True)
+            ok, msg = configurar_despertador(
+                hora=hora, cidade=cidade, saudacao_nome=nome, ativo=True
+            )
             if ok:
                 iniciar_monitor_despertador(falar_callback=falar)
             return msg
@@ -645,7 +709,15 @@ def processar_mensagem(user):
     if user_l in {"nova", "ei nova", "ok nova", "olá nova", "ola nova"}:
         return ret("Oi chefe. Estou pronta para ajudar.")
 
-    if user_l in {"/help", "help", "ajuda", "menu help", "comandos", "o que voce faz", "o que você faz"}:
+    if user_l in {
+        "/help",
+        "help",
+        "ajuda",
+        "menu help",
+        "comandos",
+        "o que voce faz",
+        "o que você faz",
+    }:
         return ret(ajuda_texto_humano(), evento="help")
 
     if user_l in {
@@ -687,8 +759,19 @@ def processar_mensagem(user):
             evento="identity",
         )
 
-    if any(k in user_l for k in ["responda em ingles", "responda em inglês", "fale em ingles", "fale em inglês", "speak english"]):
-        return ret("Posso entender termos em inglês, mas para manter sua experiência premium eu vou responder em português.")
+    if any(
+        k in user_l
+        for k in [
+            "responda em ingles",
+            "responda em inglês",
+            "fale em ingles",
+            "fale em inglês",
+            "speak english",
+        ]
+    ):
+        return ret(
+            "Posso entender termos em inglês, mas para manter sua experiência premium eu vou responder em português."
+        )
 
     if user_l in {"/orquestrador", "como voce decide", "como você decide"}:
         return ret(explicar_orquestrador())
@@ -727,7 +810,12 @@ def processar_mensagem(user):
     }:
         return ret(auditoria_humana())
 
-    if user_l in {"/status sistema", "/scan sistema", "/diagnostico sistema", "/diagnóstico sistema"}:
+    if user_l in {
+        "/status sistema",
+        "/scan sistema",
+        "/diagnostico sistema",
+        "/diagnóstico sistema",
+    }:
         diag = status_sistema_detalhado()
         sec = diag.get("security", {})
         assist = diag.get("assistant", {})
@@ -770,9 +858,7 @@ def processar_mensagem(user):
     if user_l.startswith("/autonomia risco "):
         nivel = user_l.replace("/autonomia risco ", "").strip()
         auto = atualizar_autonomia(nivel_risco=nivel)
-        return ret(
-            f"Política de risco atualizada para: {auto.get('autonomia_nivel_risco')}."
-        )
+        return ret(f"Política de risco atualizada para: {auto.get('autonomia_nivel_risco')}.")
 
     if user_l.startswith("/autonomia liberdade "):
         valor = user_l.replace("/autonomia liberdade ", "").strip()
@@ -883,32 +969,59 @@ def processar_mensagem(user):
             "Não consegui pesquisar agora. Se quiser, me ensine essa resposta usando /ensinar pergunta = resposta."
         )
 
-    if user_l.startswith("pesquisar ") or user_l.startswith("pesquise ") or user_l.startswith("buscar ") or user_l.startswith("busque "):
-        consulta = re.sub(r"^(pesquisar|pesquise|buscar|busque)\s+", "", user, flags=re.IGNORECASE).strip(" :,-")
+    if (
+        user_l.startswith("pesquisar ")
+        or user_l.startswith("pesquise ")
+        or user_l.startswith("buscar ")
+        or user_l.startswith("busque ")
+    ):
+        consulta = extrair_consulta_pesquisa_web(user)
         if consulta:
             resultado = pesquisar_na_internet(consulta)
             if resultado.get("ok"):
                 fontes = resultado.get("fontes", [])
                 aprender_de_pesquisa(consulta, str(resultado.get("resumo", "")), fontes)
                 return ret(formatar_resposta_pesquisa(resultado), evento="web_search")
-        return ret("Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.", ok=False, evento="web_search")
+        return ret(
+            "Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.",
+            ok=False,
+            evento="web_search",
+        )
 
-    if any(k in user_l for k in ["pesquise na internet", "procure na internet", "buscar na internet", "pesquise sobre", "procure sobre"]):
-        consulta = user
-        consulta = re.sub(r"^(pesquise|procure|buscar|busque)(\s+na internet|\s+sobre)?", "", consulta, flags=re.IGNORECASE).strip(" :,-")
-        resultado = pesquisar_na_internet(consulta)
-        if resultado.get("ok"):
-            fontes = resultado.get("fontes", [])
-            aprender_de_pesquisa(consulta, str(resultado.get("resumo", "")), fontes)
-            return ret(formatar_resposta_pesquisa(resultado), evento="web_search")
-        return ret("Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.", ok=False, evento="web_search")
+    if any(
+        k in user_l
+        for k in [
+            "pesquise na internet",
+            "procure na internet",
+            "buscar na internet",
+            "pesquise sobre",
+            "procure sobre",
+        ]
+    ):
+        consulta = extrair_consulta_pesquisa_web(user)
+        if consulta:
+            resultado = pesquisar_na_internet(consulta)
+            if resultado.get("ok"):
+                fontes = resultado.get("fontes", [])
+                aprender_de_pesquisa(consulta, str(resultado.get("resumo", "")), fontes)
+                return ret(formatar_resposta_pesquisa(resultado), evento="web_search")
+        return ret(
+            "Não consegui encontrar agora. Se quiser, me ensine essa resposta e eu aprendo.",
+            ok=False,
+            evento="web_search",
+        )
 
-    if user_l.startswith("/lembrar ") or user_l.startswith("me lembre") or user_l.startswith("lembre-me"):
+    if (
+        user_l.startswith("/lembrar ")
+        or user_l.startswith("me lembre")
+        or user_l.startswith("lembre-me")
+    ):
         texto = user
         for pref in ["/lembrar", "me lembre de", "me lembre", "lembre-me de", "lembre-me"]:
             if texto.lower().startswith(pref):
                 texto = texto[len(pref) :].strip(" :,-")
                 break
+
         def _parse_quando(frase: str) -> str:
             f = (frase or "").strip()
             now = datetime.now()
@@ -923,7 +1036,9 @@ def processar_mensagem(user):
                 d = m_br.group(1).split("/")
                 dd, mm = int(d[0]), int(d[1])
                 yy = int(d[2]) if len(d[2]) == 4 else int(f"20{d[2]}")
-                dt = datetime.strptime(f"{yy:04d}-{mm:02d}-{dd:02d} {m_br.group(2)}", "%Y-%m-%d %H:%M")
+                dt = datetime.strptime(
+                    f"{yy:04d}-{mm:02d}-{dd:02d} {m_br.group(2)}", "%Y-%m-%d %H:%M"
+                )
                 return dt.isoformat(timespec="minutes")
 
             m_amanha = re.search(r"\bamanh[ãa]\b.*?\b(\d{1,2}:\d{2})\b", f, flags=re.IGNORECASE)
@@ -961,7 +1076,11 @@ def processar_mensagem(user):
         item = adicionar_lembrete(texto, quando=quando)
         if item.get("ok"):
             return ret(f"Lembrete salvo, chefe: {item['item'].get('texto')}", evento="reminder_add")
-        return ret("Não consegui salvar o lembrete. Me diga exatamente o que devo lembrar.", ok=False, evento="reminder_add")
+        return ret(
+            "Não consegui salvar o lembrete. Me diga exatamente o que devo lembrar.",
+            ok=False,
+            evento="reminder_add",
+        )
 
     if user_l in {"/lembretes", "listar lembretes", "meus lembretes"}:
         lembretes = listar_lembretes()
@@ -988,7 +1107,18 @@ def processar_mensagem(user):
     if consulta_mapa:
         return ret(_responder_busca_mapa(consulta_mapa, modo="busca"), evento="maps_search")
 
-    if any(k in user_l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado financeiro"]):
+    if any(
+        k in user_l
+        for k in [
+            "cotacao",
+            "cotação",
+            "dolar",
+            "euro",
+            "bitcoin",
+            "ethereum",
+            "mercado financeiro",
+        ]
+    ):
         return ret(formatar_cotacoes_humanas(cotacoes_financeiras()), evento="market")
 
     if any(k in user_l for k in ["clima", "tempo agora", "temperatura"]):
@@ -998,7 +1128,11 @@ def processar_mensagem(user):
             cidade = m.group(1).strip()
         return ret(consultar_clima(cidade), evento="weather")
 
-    if user_l.startswith("/calcular ") or user_l.startswith("calcule ") or user_l.startswith("quanto e "):
+    if (
+        user_l.startswith("/calcular ")
+        or user_l.startswith("calcule ")
+        or user_l.startswith("quanto e ")
+    ):
         expr = user
         for pref in ["/calcular", "calcule", "quanto e", "quanto é"]:
             if expr.lower().startswith(pref):
@@ -1041,7 +1175,8 @@ def processar_mensagem(user):
         if len(nome_projeto) < 2:
             destino = "Notion" if provider == "notion" else "Google Drive"
             return ret(
-                f"Me diga o nome do projeto para eu criar no {destino}.\n\n" + _exemplos_criacao_projeto(),
+                f"Me diga o nome do projeto para eu criar no {destino}.\n\n"
+                + _exemplos_criacao_projeto(),
                 ok=False,
                 evento="project_intent",
             )
@@ -1116,8 +1251,12 @@ def processar_mensagem(user):
             resposta = f"{saud}. Como posso ajudar você agora?"
     if "não entendi" in resposta.lower() or "não consegui entender" in resposta.lower():
         resposta += " Se quiser, me ensine essa resposta com /ensinar pergunta = resposta."
-    if any(k in user_l for k in ["programação", "programacao", "api", "agente de ia", "agentes de ia"]):
-        resposta += " Eu também posso te ajudar com programação, APIs e arquitetura de agentes de IA."
+    if any(
+        k in user_l for k in ["programação", "programacao", "api", "agente de ia", "agentes de ia"]
+    ):
+        resposta += (
+            " Eu também posso te ajudar com programação, APIs e arquitetura de agentes de IA."
+        )
     if "gosto" in user_l or "me adapte" in user_l or "adapt" in user_l:
         resposta += " " + resumo_adaptacao_usuario()
     if briefing and intencao == "ajuda":
@@ -1305,27 +1444,43 @@ class NovaHandler(BaseHTTPRequestHandler):
                 valido = True
                 break
         if not valido:
-            self._send_json({"ok": False, "error": "rbac_user_invalid"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json(
+                {"ok": False, "error": "rbac_user_invalid"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
 
         # Matriz simples de permissões por endpoint.
         if path.startswith("/admin") and not _papel_permitido(role, ("admin",)):
-            self._send_json({"ok": False, "error": "rbac_forbidden_admin"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json(
+                {"ok": False, "error": "rbac_forbidden_admin"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
         if path.startswith("/security") and not _papel_permitido(role, ("admin", "security")):
-            self._send_json({"ok": False, "error": "rbac_forbidden_security"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json(
+                {"ok": False, "error": "rbac_forbidden_security"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
         if path.startswith("/autonomy/config") and not _papel_permitido(role, ("admin",)):
-            self._send_json({"ok": False, "error": "rbac_forbidden_autonomy"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json(
+                {"ok": False, "error": "rbac_forbidden_autonomy"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
         if path.startswith("/autonomy/task") and not _papel_permitido(role, ("admin", "operator")):
-            self._send_json({"ok": False, "error": "rbac_forbidden_task"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json(
+                {"ok": False, "error": "rbac_forbidden_task"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
         if path.startswith("/approvals") and not _papel_permitido(role, ("admin", "security")):
-            self._send_json({"ok": False, "error": "rbac_forbidden_approval"}, status=HTTPStatus.FORBIDDEN)
+            self._send_json(
+                {"ok": False, "error": "rbac_forbidden_approval"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
-        if path.startswith("/documents/analyze") and not _papel_permitido(role, ("admin", "operator", "analyst")):
-            self._send_json({"ok": False, "error": "rbac_forbidden_documents"}, status=HTTPStatus.FORBIDDEN)
+        if path.startswith("/documents/analyze") and not _papel_permitido(
+            role, ("admin", "operator", "analyst")
+        ):
+            self._send_json(
+                {"ok": False, "error": "rbac_forbidden_documents"}, status=HTTPStatus.FORBIDDEN
+            )
             return False
         return True
 
@@ -1387,6 +1542,7 @@ class NovaHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["8"])[0])
             except (ValueError, TypeError):
                 from core.logger import logger
+
                 logger.warning("invalid_limit_memory_recent")
                 limit = 8
             items = get_default_orchestrator().memory.search_recent(
@@ -1402,6 +1558,7 @@ class NovaHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["8"])[0])
             except (ValueError, TypeError):
                 from core.logger import logger
+
                 logger.warning("invalid_limit_memory_search")
                 limit = 8
             items = get_default_orchestrator().memory.search(
@@ -1537,7 +1694,9 @@ class NovaHandler(BaseHTTPRequestHandler):
                 lon = float(lon_raw)
             except INPUT_PARSE_ERRORS as exc:
                 _log_warning("invalid_weather_coords", exc, lat=lat_raw, lon=lon_raw)
-                self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             self._send_json({"ok": True, "summary": consultar_clima_por_coordenadas(lat, lon)})
             return
@@ -1563,7 +1722,9 @@ class NovaHandler(BaseHTTPRequestHandler):
                 lon = float(lon_raw)
             except INPUT_PARSE_ERRORS as exc:
                 _log_warning("invalid_location_reverse_coords", exc, lat=lat_raw, lon=lon_raw)
-                self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             out = reverse_geocode(lat, lon)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_GATEWAY
@@ -1578,7 +1739,9 @@ class NovaHandler(BaseHTTPRequestHandler):
                 lon = float(lon_raw) if lon_raw else None
             except INPUT_PARSE_ERRORS as exc:
                 _log_warning("invalid_maps_search_coords", exc, lat=lat_raw, lon=lon_raw)
-                self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             out = search_places(busca, latitude=lat, longitude=lon, limit=3)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
@@ -1630,7 +1793,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             backup = body.get("backup", {})
             memory = backup.get("memory", {}) if isinstance(backup, dict) else {}
             if not isinstance(memory, dict):
-                self._send_json({"ok": False, "error": "invalid_backup"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "invalid_backup"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             salvar_memoria_usuario(memory)
             if isinstance(backup, dict):
@@ -1654,7 +1819,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             user_id = str(body.get("user_id", "default")).strip() or "default"
             profile = body.get("profile", {})
             if not isinstance(profile, dict):
-                self._send_json({"ok": False, "error": "invalid_profile"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "invalid_profile"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             self._send_json({"ok": True, "profile": premium_atualizar_perfil(user_id, profile)})
             return
@@ -1664,7 +1831,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             category = str(body.get("category", "contexto")).strip() or "contexto"
             content = str(body.get("content", "")).strip()
             if not content:
-                self._send_json({"ok": False, "error": "content_required"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "content_required"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             importance = _parse_int_or_default(
                 body.get("importance", 1),
@@ -1690,10 +1859,14 @@ class NovaHandler(BaseHTTPRequestHandler):
             params = body.get("params", {})
             prompt_text = str(body.get("prompt_text", "")).strip()
             if not tool_name:
-                self._send_json({"ok": False, "error": "tool_name_required"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "tool_name_required"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             if not isinstance(params, dict):
-                self._send_json({"ok": False, "error": "invalid_params"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "invalid_params"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             result = get_default_orchestrator().execute_tool(
                 user_id,
@@ -1770,9 +1943,10 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/approvals/decide":
             req_id = str(body.get("request_id", "")).strip()
             approve = bool(body.get("approve", False))
-            approver = str(body.get("approver", "")).strip() or str(
-                self.headers.get("X-User-Name", "")
-            ).strip()
+            approver = (
+                str(body.get("approver", "")).strip()
+                or str(self.headers.get("X-User-Name", "")).strip()
+            )
             note = str(body.get("note", "")).strip()
             out = decidir_aprovacao(req_id, approve=approve, approver=approver, note=note)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
@@ -1790,7 +1964,9 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/agent/plan":
             objetivo = str(body.get("objective", "")).strip()
             if not objetivo:
-                self._send_json({"ok": False, "error": "objective_required"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "objective_required"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             plano = planejar_objetivo(objetivo, contexto=CONTEXTO)
             steps = []
@@ -1818,12 +1994,14 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/agent/execute":
             objetivo = str(body.get("objective", "")).strip()
             if not objetivo:
-                self._send_json({"ok": False, "error": "objective_required"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "objective_required"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             resultado = executar_agente(objetivo, contexto=CONTEXTO)
             CONTEXTO["confirmacao_pendente"] = resultado.get("confirmacao_pendente")
             steps = []
-            for p in (resultado.get("plano", []) or []):
+            for p in resultado.get("plano", []) or []:
                 steps.append(
                     {
                         "action": getattr(p, "acao", ""),
@@ -1920,7 +2098,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             mensagem = str(body.get("message", "")).strip()
             config = carregar_config_painel()
             if not config.get("telegram_ativo"):
-                self._send_json({"ok": False, "error": "telegram_disabled"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "telegram_disabled"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             ok, msg = enviar_mensagem_telegram(
                 token=str(config.get("telegram_token", "")),
@@ -1934,13 +2114,19 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/search/web":
             consulta = str(body.get("query", "")).strip()
             if not consulta:
-                self._send_json({"ok": False, "error": "query_required"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_json(
+                    {"ok": False, "error": "query_required"}, status=HTTPStatus.BAD_REQUEST
+                )
                 return
             resultado = pesquisar_na_internet(consulta)
             self._send_json(
                 {
                     "ok": resultado.get("ok") is True,
-                    "summary": formatar_resposta_pesquisa(resultado) if resultado.get("ok") else resultado.get("resumo", ""),
+                    "summary": (
+                        formatar_resposta_pesquisa(resultado)
+                        if resultado.get("ok")
+                        else resultado.get("resumo", "")
+                    ),
                     "sources": resultado.get("fontes", []),
                     "links": resultado.get("links", []),
                 }
@@ -1964,7 +2150,11 @@ class NovaHandler(BaseHTTPRequestHandler):
             quando = str(body.get("when", "")).strip()
             if not quando:
                 self._send_json(
-                    {"ok": False, "error": "when_required", "message": "Informe data/hora para o lembrete."},
+                    {
+                        "ok": False,
+                        "error": "when_required",
+                        "message": "Informe data/hora para o lembrete.",
+                    },
                     status=HTTPStatus.BAD_REQUEST,
                 )
                 return
@@ -1973,7 +2163,11 @@ class NovaHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 _log_warning("invalid_reminder_datetime", exc, when=quando)
                 self._send_json(
-                    {"ok": False, "error": "when_invalid", "message": "Formato de data/hora inválido."},
+                    {
+                        "ok": False,
+                        "error": "when_invalid",
+                        "message": "Formato de data/hora inválido.",
+                    },
                     status=HTTPStatus.BAD_REQUEST,
                 )
                 return
@@ -2074,7 +2268,9 @@ class NovaHandler(BaseHTTPRequestHandler):
                 ativo=_bool_ou_none(body.get("ativo")),
             )
             if not user:
-                self._send_json({"ok": False, "error": "user_not_found"}, status=HTTPStatus.NOT_FOUND)
+                self._send_json(
+                    {"ok": False, "error": "user_not_found"}, status=HTTPStatus.NOT_FOUND
+                )
                 return
             self._send_json({"ok": True, "user": user, "users": listar_usuarios()})
             return
@@ -2098,7 +2294,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             user_id = path.split("/")[-1]
             ok = remover_usuario(user_id)
             if not ok:
-                self._send_json({"ok": False, "error": "user_not_found"}, status=HTTPStatus.NOT_FOUND)
+                self._send_json(
+                    {"ok": False, "error": "user_not_found"}, status=HTTPStatus.NOT_FOUND
+                )
                 return
             self._send_json({"ok": True, "removed": True, "users": listar_usuarios()})
             return
@@ -2107,7 +2305,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             rule_id = path.split("/")[-1]
             ok = remover_rotina(rule_id)
             if not ok:
-                self._send_json({"ok": False, "error": "rule_not_found"}, status=HTTPStatus.NOT_FOUND)
+                self._send_json(
+                    {"ok": False, "error": "rule_not_found"}, status=HTTPStatus.NOT_FOUND
+                )
                 return
             self._send_json({"ok": True, "removed": True, "rules": listar_rotinas()})
             return
@@ -2125,7 +2325,9 @@ def main():
     args = parser.parse_args()
 
     print("*** WARNING: ThreadingHTTPServer DEPRECATED ***")
-    print("Use FastAPI instead: cd backend_python && uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload")
+    print(
+        "Use FastAPI instead: cd backend_python && uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload"
+    )
     print("*** Functionality migrated to /chat, /admin, /system endpoints ***")
 
     try:
