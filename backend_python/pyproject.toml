@@ -1,0 +1,30 @@
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+pretty = true
+show_error_codes = true
+warn_unused_configs = true
+ignore_missing_imports = true
+follow_imports = "skip"
+check_untyped_defs = false
+files = [
+    "api/app.py",
+    "api/dependencies.py",
+    "api/routes_actions.py",
+    "api/routes_admin.py",
+    "api/routes_chat.py",
+    "api/routes_location.py",
+    "api/routes_memory.py",
+    "api/routes_system.py",
+    "api/routes_voice.py",
+    "core/logger.py",
+    "models/schemas.py",
+    "tests/test_api.py",
+]

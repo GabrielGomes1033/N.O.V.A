@@ -105,4 +105,4 @@ echo "Provider de busca principal: ${SEARCH_PROVIDER}"
 echo "Python selecionado: ${PYTHON_BIN}"
 
 cd "${ROOT_DIR}"
-exec "${PYTHON_BIN}" backend_python/api_server.py --host "${HOST}" --port "${PORT}"
+exec "${PYTHON_BIN}" -m uvicorn backend_python.api.app:create_app --factory --host "${HOST}" --port "${PORT}"

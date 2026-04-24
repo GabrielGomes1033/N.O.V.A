@@ -5,6 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-8117}"
 HOST="127.0.0.1"
 BASE_URL="http://${HOST}:${PORT}"
+PYTHON_BIN="python3"
+
+if [[ -x "${ROOT_DIR}/venv311/bin/python" ]]; then
+  PYTHON_BIN="${ROOT_DIR}/venv311/bin/python"
+elif [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+  PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+fi
 
 cleanup() {
   if [[ -n "${API_PID:-}" ]]; then
@@ -29,7 +36,7 @@ flutter test
 
 echo "[5/8] Subindo API local (${BASE_URL})..."
 cd "${ROOT_DIR}"
-python3 backend_python/api_server.py --host "${HOST}" --port "${PORT}" >/tmp/nova_api_integration.log 2>&1 &
+"${PYTHON_BIN}" -m uvicorn backend_python.api.app:create_app --factory --host "${HOST}" --port "${PORT}" >/tmp/nova_api_integration.log 2>&1 &
 API_PID=$!
 sleep 2
 

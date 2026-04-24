@@ -21,6 +21,20 @@ jobs:
       - name: Backend syntax check
         run: |
           python -m compileall -q backend_python
+      - name: Backend format check
+        working-directory: backend_python
+        run: |
+          python -m black --check api/app.py api/dependencies.py api/routes_location.py core/logger.py models/schemas.py tests/test_api.py
+      - name: Backend type check
+        working-directory: backend_python
+        run: |
+          python -m mypy
+      - name: Backend tests
+        working-directory: backend_python
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest tests
 
   frontend:
     runs-on: ubuntu-latest

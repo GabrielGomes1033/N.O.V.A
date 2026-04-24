@@ -2,14 +2,24 @@ from __future__ import annotations
 
 try:
     from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
 except Exception:
     FastAPI = None
+    CORSMiddleware = None
 
 from core.api_profile import NOVA_API_VERSION, build_api_health
-from api.routes_actions import router as actions_router
-from api.routes_chat import router as chat_router
-from api.routes_memory import router as memory_router
-from api.routes_voice import router as voice_router
+from .routes_actions import router as actions_router
+from .routes_chat import router as chat_router
+from .routes_compat import router as compat_router
+from .routes_location import router as location_router
+from .routes_memory import router as memory_router
+from .routes_system import router as system_router
+from .routes_voice import router as voice_router
+
+try:
+    from .routes_admin import router as admin_router
+except Exception:
+    admin_router = None
 
 
 def create_app():
@@ -24,6 +34,15 @@ def create_app():
         description="Base Jarvis Fase 1 com orquestrador, memoria SQLite e ferramentas seguras.",
     )
 
+    if CORSMiddleware is not None:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization"],
+        )
+
     @app.get("/health")
     def health() -> dict[str, object]:
         return build_api_health(entrypoint="fastapi_app")
@@ -32,4 +51,12 @@ def create_app():
     app.include_router(memory_router)
     app.include_router(actions_router)
     app.include_router(voice_router)
+    if compat_router is not None:
+        app.include_router(compat_router)
+    if admin_router is not None:
+        app.include_router(admin_router)
+    if system_router is not None:
+        app.include_router(system_router)
+    if location_router is not None:
+        app.include_router(location_router)
     return app

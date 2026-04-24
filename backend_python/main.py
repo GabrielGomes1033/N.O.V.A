@@ -9,14 +9,32 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+try:
+    from core.logger import logger
+except (ImportError, AttributeError):
+    class _FallbackLogger:
+        def warning(self, event: str, **fields) -> None:
+            return None
+
+        def error(self, event: str, **fields) -> None:
+            return None
+
+    logger = _FallbackLogger()
+
 # =========================
 # LOG DE ERRO
 # =========================
 def registrar_erro(exc):
+    logger.error("unhandled_error", exc_info=(type(exc), exc, exc.__traceback__))
+    from traceback import format_exception
     caminho = Path("erro_log.txt")
-    conteudo = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    conteudo = "".join(format_exception(type(exc), exc, exc.__traceback__))
     caminho.write_text(conteudo, encoding="utf-8")
     return caminho
+
+
+def _log_warning(evento: str, exc: BaseException, **fields) -> None:
+    logger.warning(evento, error=str(exc), **fields)
 
 
 # =========================
@@ -157,19 +175,22 @@ try:
         relatorio_agora as relatorio_agora_fase2,
     )
     from core.backup_drive import status_backup_drive, sincronizar_backup_drive, restaurar_backup_drive
-except Exception as e:
+except (ImportError, AttributeError) as e:
     registrar_erro(e)
 
 try:
     from api.app import create_app
+    import uvicorn
 
     app = create_app()
-except Exception:
+except (ImportError, ModuleNotFoundError):
     app = None
 
 try:
     from core.jarvis_chat_bridge import process_pending_tool_confirmation, try_jarvis_tool_flow
-except Exception:
+except (ImportError, AttributeError) as exc:
+    _log_warning("jarvis_chat_bridge_unavailable", exc)
+
     def process_pending_tool_confirmation(texto, contexto=None, mode="normal"):
         return None
 
@@ -177,12 +198,15 @@ except Exception:
         return None
 
 # Migração automática para camada segura de persistência.
-try:
-    carregar_memoria_usuario()
-    carregar_aprendizado()
-    status_admin()
-except Exception:
-    pass
+for bootstrap_name, bootstrap_fn in (
+    ("carregar_memoria_usuario", carregar_memoria_usuario),
+    ("carregar_aprendizado", carregar_aprendizado),
+    ("status_admin", status_admin),
+):
+    try:
+        bootstrap_fn()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _log_warning("bootstrap_call_failed", exc, target=bootstrap_name)
 
 
 # =========================
@@ -229,7 +253,7 @@ def comando_ensinar(texto):
         total = salvar_aprendizado(pergunta, resposta)
 
         print(f"NOVA: Aprendi! ({total} respostas salvas)")
-    except:
+    except ValueError:
         print("NOVA: Use /ensinar pergunta = resposta")
 
 
@@ -241,12 +265,14 @@ def comando_google(texto):
         wiki = gerar_pesquisa_wikipedia(consulta)
 
         if wiki:
-            print(f"\nNOVA: {wiki['titulo']}\n{wiki['resumo']}")
+            titulo = str(wiki.get("titulo", "") or "").strip()
+            resumo = str(wiki.get("resumo", "") or "").strip()
+            print(f"\nNOVA: {titulo}\n{resumo}".strip())
         else:
             print("NOVA: Abrindo Google...")
             webbrowser.open(url)
 
-    except:
+    except ValueError:
         print("NOVA: Use /google algo")
 
 
@@ -258,7 +284,7 @@ def comando_nome(texto):
         resposta = f"Beleza, vou te chamar de {contexto['nome_usuario']}"
         print(f"NOVA: {resposta}")
         registrar_interacao_usuario(texto, resposta)
-    except:
+    except ValueError:
         print("NOVA: Use /nome SeuNome")
 
 
@@ -566,8 +592,8 @@ def main():
 
         try:
             falar(resposta)
-        except:
-            pass
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log_warning("cli_tts_fail", exc)
 
 
 # =========================

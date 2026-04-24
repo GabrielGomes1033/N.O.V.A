@@ -137,6 +137,7 @@ from core.jarvis_chat_bridge import (
 from core.orchestrator import get_default_orchestrator
 from core.memoria_assuntos import aprender_assuntos, perfil_assuntos, dica_contextual_para_pergunta
 from core.help_center import ajuda_texto_humano, ajuda_topicos
+from core.logger import logger
 from routes.chat_routes import handle_chat_post
 from routes.knowledge_routes import (
     handle_knowledge_delete,
@@ -165,6 +166,21 @@ def _novo_contexto():
 
 CONTEXTO = _novo_contexto()
 API_TTS_SERVIDOR_ATIVO = os.getenv("NOVA_API_SERVER_TTS", "0").strip().lower() in {"1", "true", "on", "sim", "yes"}
+
+OPTIONAL_RUNTIME_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
+INPUT_PARSE_ERRORS = (TypeError, ValueError)
+
+
+def _log_warning(evento: str, exc: BaseException, **fields) -> None:
+    logger.warning(evento, error=str(exc), **fields)
+
+
+def _parse_int_or_default(raw_value, default: int, *, evento: str, campo: str) -> int:
+    try:
+        return int(str(raw_value).strip())
+    except INPUT_PARSE_ERRORS as exc:
+        _log_warning(evento, exc, campo=campo, raw=str(raw_value), default=default)
+        return default
 
 
 def sincronizar_memoria():
@@ -288,15 +304,18 @@ def _responder_busca_mapa(consulta: str, modo: str = "busca") -> str:
     lon = memoria.get("ultima_longitude")
     try:
         lat_num = float(lat) if str(lat).strip() else None
-    except Exception:
+    except (ValueError, TypeError):
+        from core.logger import logger
+        logger.warning("invalid_lat", lat=str(lat))
         lat_num = None
     try:
         lon_num = float(lon) if str(lon).strip() else None
-    except Exception:
+    except (ValueError, TypeError):
+        from core.logger import logger
+        logger.warning("invalid_lon", lon=str(lon))
         lon_num = None
     resultado = search_places(consulta_limpa, latitude=lat_num, longitude=lon_num, limit=3)
-
-    link = gerar_link_busca_maps(consulta_limpa)
+    link: str = gerar_link_busca_maps(consulta_limpa)
     if resultado.get("ok") and (resultado.get("items") or []):
         item = resultado["items"][0]
         nome = str(item.get("name", "") or item.get("display_name", "")).strip()
@@ -540,8 +559,8 @@ def processar_mensagem(user):
         duracao_ms = (time.perf_counter() - inicio) * 1000.0
         try:
             registrar_metrica(evento, duracao_ms, ok=ok)
-        except Exception:
-            pass
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("metric_record_fail", exc, metric_event=evento)
         try:
             registrar_trace(
                 route="/chat",
@@ -552,8 +571,8 @@ def processar_mensagem(user):
                 ok=ok,
                 contexto=CONTEXTO,
             )
-        except Exception:
-            pass
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("trace_record_fail", exc, trace_event=evento)
         return msg
 
     if not user:
@@ -562,8 +581,8 @@ def processar_mensagem(user):
     aprender_gostos_por_mensagem(user)
     try:
         aprender_assuntos(texto=user, origem="chat_user")
-    except Exception:
-        pass
+    except OPTIONAL_RUNTIME_ERRORS as exc:
+        _log_warning("subject_learning_fail", exc, source="chat_user")
     premium_aprender(CONTEXTO.get("nome_usuario", "") or "default", user)
 
     def aprender_de_pesquisa(consulta: str, resumo: str, fontes: list[str] | None = None) -> None:
@@ -594,8 +613,8 @@ def processar_mensagem(user):
                 origem="web_search",
                 resumo=resumo_limpo,
             )
-        except Exception:
-            pass
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("search_learning_fail", exc, query=consulta_limpa)
 
     if CONTEXTO.get("rotina_pendente"):
         resp_rotina = processar_confirmacao_rotina(user, contexto=CONTEXTO)
@@ -684,7 +703,7 @@ def processar_mensagem(user):
                 f"Feedback registrado. Nota média atual: {out.get('feedback_medio')} "
                 f"({out.get('feedback_total')} avaliações)."
             )
-        except Exception:
+        except (IndexError, ValueError):
             return ret("Use /feedback <1-5> <comentário opcional>.")
 
     if user_l in {"/metricas", "/métricas", "status da assistente"}:
@@ -775,22 +794,23 @@ def processar_mensagem(user):
             pergunta, resposta_txt = conteudo.split("=", 1)
             total = salvar_aprendizado(pergunta.strip(), resposta_txt.strip())
             return ret(f"Aprendi! ({total} respostas salvas).")
-        except Exception:
+        except ValueError:
             return ret("Use /ensinar pergunta = resposta.")
 
     if user.startswith("/rag reindex"):
+        partes = user.split(" ", 2)
+        paths = []
+        if len(partes) >= 3 and partes[2].strip():
+            paths = [p.strip() for p in partes[2].split(",") if p.strip()]
         try:
-            partes = user.split(" ", 2)
-            paths = []
-            if len(partes) >= 3 and partes[2].strip():
-                paths = [p.strip() for p in partes[2].split(",") if p.strip()]
             out = reindexar_documentos(paths if paths else None)
-            return ret(
-                f"RAG reindexado. Arquivos: {out.get('indexed_files')} | Chunks: {out.get('indexed_chunks')}",
-                evento="rag_index",
-            )
-        except Exception:
-            return ret("Use /rag reindex [arquivo1,arquivo2,...]", ok=False, evento="rag_index")
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("rag_reindex_fail", exc, path_count=len(paths))
+            return ret("Não consegui reindexar os documentos agora.", ok=False, evento="rag_index")
+        return ret(
+            f"RAG reindexado. Arquivos: {out.get('indexed_files')} | Chunks: {out.get('indexed_chunks')}",
+            evento="rag_index",
+        )
 
     if user.startswith("/rag "):
         pergunta = user[5:].strip()
@@ -813,9 +833,12 @@ def processar_mensagem(user):
             tipo, valor = resto.split(":", 1)
             rule = adicionar_rotina(gat, tipo.strip(), valor.strip(), sensivel=sensivel)
             return ret(f"Rotina criada ({rule.get('id')}).", evento="automation_add")
-        except Exception:
+        except ValueError as exc:
+            return ret(f"Não consegui criar a rotina: {exc}", ok=False, evento="automation_add")
+        except (OSError, RuntimeError) as exc:
+            _log_warning("automation_add_fail", exc)
             return ret(
-                "Use /rotina adicionar gatilho => responder:mensagem [sensivel] ou lembrete:texto",
+                "Não consegui salvar a rotina agora.",
                 ok=False,
                 evento="automation_add",
             )
@@ -841,16 +864,24 @@ def processar_mensagem(user):
     if user.startswith("/google"):
         try:
             _, consulta = user.split(" ", 1)
-            pesquisa = pesquisar_na_internet(consulta)
-            if pesquisa.get("ok"):
-                fontes = pesquisa.get("fontes", [])
-                aprender_de_pesquisa(consulta, str(pesquisa.get("resumo", "")), fontes)
-                return ret(formatar_resposta_pesquisa(pesquisa), evento="web_search")
-            return ret(
-                "Não consegui pesquisar agora. Se quiser, me ensine essa resposta usando /ensinar pergunta = resposta."
-            )
-        except Exception:
+        except ValueError:
             return ret("Use /google algo.", ok=False, evento="web_search")
+        try:
+            pesquisa = pesquisar_na_internet(consulta)
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("command_google_fail", exc, query=consulta)
+            return ret(
+                "Não consegui pesquisar agora. Se quiser, me ensine essa resposta usando /ensinar pergunta = resposta.",
+                ok=False,
+                evento="web_search",
+            )
+        if pesquisa.get("ok"):
+            fontes = pesquisa.get("fontes", [])
+            aprender_de_pesquisa(consulta, str(pesquisa.get("resumo", "")), fontes)
+            return ret(formatar_resposta_pesquisa(pesquisa), evento="web_search")
+        return ret(
+            "Não consegui pesquisar agora. Se quiser, me ensine essa resposta usando /ensinar pergunta = resposta."
+        )
 
     if user_l.startswith("pesquisar ") or user_l.startswith("pesquise ") or user_l.startswith("buscar ") or user_l.startswith("busque "):
         consulta = re.sub(r"^(pesquisar|pesquise|buscar|busque)\s+", "", user, flags=re.IGNORECASE).strip(" :,-")
@@ -1049,7 +1080,7 @@ def processar_mensagem(user):
             CONTEXTO["nome_usuario"] = nome.strip().title()
             sincronizar_memoria()
             return ret(f"Beleza, vou te chamar de {CONTEXTO['nome_usuario']}.")
-        except Exception:
+        except ValueError:
             return ret("Use /nome SeuNome.")
 
     if user.startswith("/memoria"):
@@ -1098,8 +1129,8 @@ def processar_mensagem(user):
             perfil=perfil,
             nome_usuario=CONTEXTO.get("nome_usuario", ""),
         )
-    except Exception:
-        pass
+    except OPTIONAL_RUNTIME_ERRORS as exc:
+        _log_warning("profile_update_fail", exc)
     # Evita empilhamento de saudações e respostas "coladas" em intents curtas.
     if intencao not in {"saudacao", "agradecimento", "despedida", "continuidade", "como_esta"}:
         try:
@@ -1107,8 +1138,8 @@ def processar_mensagem(user):
                 CONTEXTO.get("nome_usuario", "") or "default",
                 resposta,
             )
-        except Exception:
-            pass
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("premium_response_fail", exc)
 
     # Só injeta RAG automaticamente em perguntas mais completas para não poluir respostas simples.
     deve_consultar_rag_auto = ("?" in user) or (len(user.split()) >= 5)
@@ -1124,28 +1155,32 @@ def processar_mensagem(user):
                 resposta = (
                     f"{resposta}\n\nReferências da sua base local: {fontes}\nTrecho: {snippet}"
                 )
-        except Exception:
-            pass
+        except OPTIONAL_RUNTIME_ERRORS as exc:
+            _log_warning("rag_auto_lookup_fail", exc)
     try:
         dica = dica_contextual_para_pergunta(user)
         if dica and len(user.split()) >= 4:
             resposta = f"{resposta}\n\n{dica}"
-    except Exception:
-        pass
+    except OPTIONAL_RUNTIME_ERRORS as exc:
+        _log_warning("context_hint_fail", exc)
     if API_TTS_SERVIDOR_ATIVO:
         try:
             falar(resposta)
-        except Exception:
-            pass
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log_warning("api_tts_fail", exc)
     return ret(resposta)
 
 
 def _json_body(handler: BaseHTTPRequestHandler):
+    length = 0
     try:
         length = int(handler.headers.get("Content-Length", "0"))
+        if length > 1024 * 1024:
+            raise ValueError("payload_too_large")
         raw = handler.rfile.read(length) if length else b"{}"
         return json.loads(raw.decode("utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as e:
+        logger.warning("json_body_parse_fail", error=str(e), length=length)
         return None
 
 
@@ -1350,7 +1385,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             user_id = str(query.get("user_id", ["default"])[0] or "default").strip() or "default"
             try:
                 limit = int(query.get("limit", ["8"])[0])
-            except Exception:
+            except (ValueError, TypeError):
+                from core.logger import logger
+                logger.warning("invalid_limit_memory_recent")
                 limit = 8
             items = get_default_orchestrator().memory.search_recent(
                 user_id=user_id,
@@ -1363,7 +1400,9 @@ class NovaHandler(BaseHTTPRequestHandler):
             search_query = str(query.get("query", [""])[0] or "").strip()
             try:
                 limit = int(query.get("limit", ["8"])[0])
-            except Exception:
+            except (ValueError, TypeError):
+                from core.logger import logger
+                logger.warning("invalid_limit_memory_search")
                 limit = 8
             items = get_default_orchestrator().memory.search(
                 user_id=user_id,
@@ -1421,27 +1460,33 @@ class NovaHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "alerts": gerar_alertas_recomendacoes()})
             return
         if path == "/memory/subjects":
-            try:
-                limit = int((query.get("limit", ["8"])[0] or "8").strip())
-            except Exception:
-                limit = 8
+            limit = _parse_int_or_default(
+                query.get("limit", ["8"])[0] or "8",
+                8,
+                evento="invalid_subjects_limit",
+                campo="limit",
+            )
             self._send_json(perfil_assuntos(limit=limit))
             return
         if path == "/help/topics":
             self._send_json(ajuda_topicos())
             return
         if path == "/observability/traces":
-            try:
-                limit = int((query.get("limit", ["120"])[0] or "120").strip())
-            except Exception:
-                limit = 120
+            limit = _parse_int_or_default(
+                query.get("limit", ["120"])[0] or "120",
+                120,
+                evento="invalid_traces_limit",
+                campo="limit",
+            )
             self._send_json({"ok": True, "items": listar_traces(limit=limit)})
             return
         if path == "/observability/summary":
-            try:
-                janela = int((query.get("window", ["200"])[0] or "200").strip())
-            except Exception:
-                janela = 200
+            janela = _parse_int_or_default(
+                query.get("window", ["200"])[0] or "200",
+                200,
+                evento="invalid_summary_window",
+                campo="window",
+            )
             self._send_json({"ok": True, "summary": resumo_traces(janela=janela)})
             return
         if path == "/premium/profile":
@@ -1452,17 +1497,21 @@ class NovaHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "audit": executar_auditoria_seguranca()})
             return
         if path == "/security/audit/history":
-            try:
-                limit = int((query.get("limit", ["30"])[0] or "30").strip())
-            except Exception:
-                limit = 30
+            limit = _parse_int_or_default(
+                query.get("limit", ["30"])[0] or "30",
+                30,
+                evento="invalid_security_audit_history_limit",
+                campo="limit",
+            )
             self._send_json({"ok": True, "items": obter_historico_auditoria(limit=limit)})
             return
         if path == "/security/session-audit":
-            try:
-                limit = int((query.get("limit", ["120"])[0] or "120").strip())
-            except Exception:
-                limit = 120
+            limit = _parse_int_or_default(
+                query.get("limit", ["120"])[0] or "120",
+                120,
+                evento="invalid_session_audit_limit",
+                campo="limit",
+            )
             self._send_json({"ok": True, "items": listar_auditoria_sessao(limit=limit)})
             return
         if path == "/security/session-audit/verify":
@@ -1486,7 +1535,8 @@ class NovaHandler(BaseHTTPRequestHandler):
             try:
                 lat = float(lat_raw)
                 lon = float(lon_raw)
-            except Exception:
+            except INPUT_PARSE_ERRORS as exc:
+                _log_warning("invalid_weather_coords", exc, lat=lat_raw, lon=lon_raw)
                 self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json({"ok": True, "summary": consultar_clima_por_coordenadas(lat, lon)})
@@ -1511,7 +1561,8 @@ class NovaHandler(BaseHTTPRequestHandler):
             try:
                 lat = float(lat_raw)
                 lon = float(lon_raw)
-            except Exception:
+            except INPUT_PARSE_ERRORS as exc:
+                _log_warning("invalid_location_reverse_coords", exc, lat=lat_raw, lon=lon_raw)
                 self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
                 return
             out = reverse_geocode(lat, lon)
@@ -1525,7 +1576,8 @@ class NovaHandler(BaseHTTPRequestHandler):
             try:
                 lat = float(lat_raw) if lat_raw else None
                 lon = float(lon_raw) if lon_raw else None
-            except Exception:
+            except INPUT_PARSE_ERRORS as exc:
+                _log_warning("invalid_maps_search_coords", exc, lat=lat_raw, lon=lon_raw)
                 self._send_json({"ok": False, "error": "invalid_coords"}, status=HTTPStatus.BAD_REQUEST)
                 return
             out = search_places(busca, latitude=lat, longitude=lon, limit=3)
@@ -1614,10 +1666,12 @@ class NovaHandler(BaseHTTPRequestHandler):
             if not content:
                 self._send_json({"ok": False, "error": "content_required"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            try:
-                importance = int(body.get("importance", 1))
-            except Exception:
-                importance = 1
+            importance = _parse_int_or_default(
+                body.get("importance", 1),
+                1,
+                evento="invalid_memory_importance",
+                campo="importance",
+            )
             scope = str(body.get("scope", "longo_prazo")).strip() or "longo_prazo"
             item = get_default_orchestrator().memory.save(
                 user_id=user_id,
@@ -1668,10 +1722,12 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/rag/feedback":
             pergunta = str(body.get("query", "")).strip()
             chunk_id = str(body.get("chunk_id", "")).strip()
-            try:
-                score = int(body.get("score", 1))
-            except Exception:
-                score = 1
+            score = _parse_int_or_default(
+                body.get("score", 1),
+                1,
+                evento="invalid_rag_feedback_score",
+                campo="score",
+            )
             out = registrar_feedback_rag(pergunta, chunk_id, score=score)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json(out, status=status)
@@ -1892,10 +1948,12 @@ class NovaHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/insights/feedback":
-            try:
-                score = int(body.get("score", 5))
-            except Exception:
-                score = 5
+            score = _parse_int_or_default(
+                body.get("score", 5),
+                5,
+                evento="invalid_feedback_score",
+                campo="score",
+            )
             comentario = str(body.get("comment", "")).strip()
             out = registrar_feedback(score, comentario=comentario)
             self._send_json(out)
@@ -1912,7 +1970,8 @@ class NovaHandler(BaseHTTPRequestHandler):
                 return
             try:
                 datetime.fromisoformat(quando.replace("Z", "+00:00"))
-            except Exception:
+            except ValueError as exc:
+                _log_warning("invalid_reminder_datetime", exc, when=quando)
                 self._send_json(
                     {"ok": False, "error": "when_invalid", "message": "Formato de data/hora inválido."},
                     status=HTTPStatus.BAD_REQUEST,
@@ -2065,16 +2124,21 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000")))
     args = parser.parse_args()
 
+    print("*** WARNING: ThreadingHTTPServer DEPRECATED ***")
+    print("Use FastAPI instead: cd backend_python && uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload")
+    print("*** Functionality migrated to /chat, /admin, /system endpoints ***")
+
     try:
         carregar_memoria_usuario()
         carregar_aprendizado()
         iniciar_monitor_despertador(falar_callback=falar)
         iniciar_runtime_fase2()
-    except Exception:
-        pass
+    except OPTIONAL_RUNTIME_ERRORS as exc:
+        _log_warning("deprecated_api_startup_fail", exc)
 
     server = ThreadingHTTPServer((args.host, args.port), NovaHandler)
-    print(f"NOVA API online em http://{args.host}:{args.port}")
+    print(f"NOVA API (DEPRECATED) online em http://{args.host}:{args.port}")
+    print("Run FastAPI for production!")
     server.serve_forever()
 
 
