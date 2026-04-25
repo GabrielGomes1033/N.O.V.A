@@ -40,7 +40,13 @@ def create_app():
             allow_origins=["*"],
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization"],
+            allow_headers=[
+                "Content-Type",
+                "Authorization",
+                "X-API-Key",
+                "X-User-Role",
+                "X-User-Name",
+            ],
         )
 
     @app.get("/health")
@@ -51,12 +57,17 @@ def create_app():
     app.include_router(memory_router)
     app.include_router(actions_router)
     app.include_router(voice_router)
+
     if compat_router is not None:
         app.include_router(compat_router)
+
     if admin_router is not None:
         app.include_router(admin_router)
+
     if system_router is not None:
         app.include_router(system_router)
+
     if location_router is not None:
         app.include_router(location_router)
+
     return app
