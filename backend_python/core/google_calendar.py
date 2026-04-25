@@ -63,19 +63,21 @@ def _normalize_natural_times(text: str) -> str:
 
 
 def _calendar_timezone() -> str:
-    return _clean(
-        os.getenv("GOOGLE_CALENDAR_TIMEZONE")
-        or os.getenv("NOVA_GOOGLE_CALENDAR_TIMEZONE")
+    return (
+        _clean(
+            os.getenv("GOOGLE_CALENDAR_TIMEZONE")
+            or os.getenv("NOVA_GOOGLE_CALENDAR_TIMEZONE")
+            or "America/Sao_Paulo"
+        )
         or "America/Sao_Paulo"
-    ) or "America/Sao_Paulo"
+    )
 
 
 def _calendar_id() -> str:
-    return _clean(
-        os.getenv("GOOGLE_CALENDAR_ID")
-        or os.getenv("NOVA_GOOGLE_CALENDAR_ID")
+    return (
+        _clean(os.getenv("GOOGLE_CALENDAR_ID") or os.getenv("NOVA_GOOGLE_CALENDAR_ID") or "primary")
         or "primary"
-    ) or "primary"
+    )
 
 
 def _credenciais_disponiveis() -> bool:
@@ -300,7 +302,7 @@ def parse_calendar_event_request(
             "error": "date_time_not_found",
             "message": (
                 "Nao consegui identificar data e hora. Exemplo: "
-                'agende reunião com cliente amanhã às 15:00'
+                "agende reunião com cliente amanhã às 15:00"
             ),
         }
 
@@ -308,7 +310,12 @@ def parse_calendar_event_request(
     matched = _clean(str(window.get("matched_text", "")))
     if matched:
         title = title.replace(matched, " ").strip(" ,:-")
-    title = re.sub(r"\b(?:na agenda(?: do google)?|no google calendar|na google agenda)\b", " ", title, flags=re.IGNORECASE)
+    title = re.sub(
+        r"\b(?:na agenda(?: do google)?|no google calendar|na google agenda)\b",
+        " ",
+        title,
+        flags=re.IGNORECASE,
+    )
     title = re.sub(r"\b(?:em|para|de|no|na)\s*$", " ", title, flags=re.IGNORECASE)
     title = _clean(title).strip(" ,:-")
     if not title:
@@ -317,8 +324,12 @@ def parse_calendar_event_request(
     assumption_notes: list[str] = []
     if window.get("assumed_date"):
         assumption_notes.append("Sem data explícita, usei a próxima ocorrência compatível.")
-    if _extract_duration_minutes(raw) == 60 and not re.search(r"\b(?:ate|até|a)\s+\d{1,2}:\d{2}\b", raw, flags=re.IGNORECASE):
-        assumption_notes.append("Como você não informou horário final, usei duração padrão de 1 hora.")
+    if _extract_duration_minutes(raw) == 60 and not re.search(
+        r"\b(?:ate|até|a)\s+\d{1,2}:\d{2}\b", raw, flags=re.IGNORECASE
+    ):
+        assumption_notes.append(
+            "Como você não informou horário final, usei duração padrão de 1 hora."
+        )
 
     return {
         "ok": True,
@@ -404,11 +415,15 @@ def create_google_calendar_event(
         },
     }
     try:
-        created = service.events().insert(
-            calendarId=target_calendar,
-            body=event_body,
-            sendUpdates="none",
-        ).execute()
+        created = (
+            service.events()
+            .insert(
+                calendarId=target_calendar,
+                body=event_body,
+                sendUpdates="none",
+            )
+            .execute()
+        )
         return {
             "ok": True,
             "provider": "google_calendar",

@@ -236,7 +236,11 @@ if APIRouter is not None:
         "/documents/analyze",
         dependencies=[
             Depends(require_token()),
-            Depends(require_rbac("admin", "operator", "analyst", error_detail="rbac_forbidden_documents")),
+            Depends(
+                require_rbac(
+                    "admin", "operator", "analyst", error_detail="rbac_forbidden_documents"
+                )
+            ),
         ],
     )
     def documents_analyze(body: dict):
@@ -278,7 +282,7 @@ if APIRouter is not None:
             return _json({"ok": False, "error": "objective_required"}, status_code=400)
         result = executar_agente(objetivo, contexto={})
         steps = []
-        for item in (result.get("plano", []) or []):
+        for item in result.get("plano", []) or []:
             steps.append(
                 {
                     "action": getattr(item, "acao", ""),
@@ -332,5 +336,6 @@ if APIRouter is not None:
         out = sintetizar_neural_base64(texto, perfil=perfil)
         status_code = 200 if out.get("ok") else 400
         return _json(out, status_code=status_code)
+
 else:
     router = None

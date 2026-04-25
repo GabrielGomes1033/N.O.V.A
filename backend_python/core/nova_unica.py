@@ -76,7 +76,15 @@ def _atualizar_interesses(perfil: dict, texto: str) -> dict:
     mapa = {
         "programacao": ["python", "java", "javascript", "api", "codigo", "flutter", "backend"],
         "ia": ["ia", "inteligencia artificial", "agente", "llm", "prompt", "openai"],
-        "ciberseguranca": ["ciber", "cyber", "seguranca", "segurança", "hacker", "termux", "pentest"],
+        "ciberseguranca": [
+            "ciber",
+            "cyber",
+            "seguranca",
+            "segurança",
+            "hacker",
+            "termux",
+            "pentest",
+        ],
         "financas": ["dolar", "euro", "bitcoin", "ethereum", "mercado", "cotacao", "invest"],
         "produtividade": ["lembrete", "agenda", "planejar", "projeto", "organizar"],
         "clima": ["tempo", "clima", "temperatura", "chuva"],
@@ -259,7 +267,13 @@ def resumo_metricas_recursos() -> dict:
         "lembretes": {"reminder_add", "reminder_list"},
         "mercado": {"market"},
         "clima": {"weather"},
-        "automacoes": {"automation_add", "automation_remove", "automation_list", "automation_exec", "automation_confirm"},
+        "automacoes": {
+            "automation_add",
+            "automation_remove",
+            "automation_list",
+            "automation_exec",
+            "automation_confirm",
+        },
         "rag": {"rag_index", "rag_query"},
         "admin": {"admin", "security", "audit"},
     }
@@ -391,7 +405,9 @@ def briefing_automatico_se_necessario() -> str | None:
 def _extrair_para_lembrete(texto: str) -> tuple[str, str]:
     raw = (texto or "").strip()
     quando = ""
-    m = re.search(r"\b(amanha|amanhã|hoje|as\s+\d{1,2}:\d{2}|\d{1,2}:\d{2})\b", raw, flags=re.IGNORECASE)
+    m = re.search(
+        r"\b(amanha|amanhã|hoje|as\s+\d{1,2}:\d{2}|\d{1,2}:\d{2})\b", raw, flags=re.IGNORECASE
+    )
     if m:
         quando = m.group(1)
     item = raw
@@ -435,8 +451,15 @@ def orquestrar_consulta(mensagem: str, contexto: dict | None = None) -> dict | N
     modo_pesquisa = bool(contexto.get("modo_pesquisa"))
 
     # Cálculo
-    if l.startswith("/calcular") or l.startswith("calcule") or l.startswith("quanto e") or l.startswith("quanto é"):
-        expr = re.sub(r"^(\/calcular|calcule|quanto e|quanto é)", "", msg, flags=re.IGNORECASE).strip(" =:")
+    if (
+        l.startswith("/calcular")
+        or l.startswith("calcule")
+        or l.startswith("quanto e")
+        or l.startswith("quanto é")
+    ):
+        expr = re.sub(
+            r"^(\/calcular|calcule|quanto e|quanto é)", "", msg, flags=re.IGNORECASE
+        ).strip(" =:")
         calc = calcular_expressao(expr)
         if calc.get("ok"):
             return {"resposta": f"Resultado: {calc.get('resultado')}"}
@@ -451,7 +474,9 @@ def orquestrar_consulta(mensagem: str, contexto: dict | None = None) -> dict | N
         }
 
     # Mercado
-    if any(k in l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado"]):
+    if any(
+        k in l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado"]
+    ):
         return {"resposta": formatar_cotacoes_humanas(cotacoes_financeiras())}
 
     # Clima

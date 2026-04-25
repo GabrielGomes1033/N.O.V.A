@@ -43,7 +43,9 @@ def _carregar_credenciais():
             info = json.loads(raw_json)
             return service_account.Credentials.from_service_account_info(info, scopes=SCOPE_DRIVE)
         if file_path and Path(file_path).is_file():
-            return service_account.Credentials.from_service_account_file(file_path, scopes=SCOPE_DRIVE)
+            return service_account.Credentials.from_service_account_file(
+                file_path, scopes=SCOPE_DRIVE
+            )
     except Exception:
         return None
     return None
@@ -78,11 +80,15 @@ def _query_nome_arquivo(nome):
 
 
 def _procurar_arquivo(service, nome):
-    res = service.files().list(
-        q=_query_nome_arquivo(nome),
-        fields="files(id,name,modifiedTime)",
-        pageSize=1,
-    ).execute()
+    res = (
+        service.files()
+        .list(
+            q=_query_nome_arquivo(nome),
+            fields="files(id,name,modifiedTime)",
+            pageSize=1,
+        )
+        .execute()
+    )
     arquivos = res.get("files", [])
     return arquivos[0] if arquivos else None
 
@@ -239,7 +245,11 @@ def criar_projeto_drive(nome_projeto: str, descricao: str):
             "mimeType": "text/plain",
             "parents": [pasta_id],
         }
-        arquivo = service.files().create(body=arquivo_meta, media_body=media, fields="id,webViewLink").execute()
+        arquivo = (
+            service.files()
+            .create(body=arquivo_meta, media_body=media, fields="id,webViewLink")
+            .execute()
+        )
 
         return True, {
             "folder_id": pasta_id,

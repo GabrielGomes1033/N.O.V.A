@@ -139,7 +139,9 @@ def _gerar_relatorio(estado):
     memoria = carregar_memoria_usuario()
     nome = memoria.get("nome_usuario") or "usuário"
     objetivos = memoria.get("objetivos_recentes", [])
-    ult_obj = objetivos[-1] if isinstance(objetivos, list) and objetivos else "nenhum objetivo recente"
+    ult_obj = (
+        objetivos[-1] if isinstance(objetivos, list) and objetivos else "nenhum objetivo recente"
+    )
     pendentes = [t for t in estado.get("queue", []) if t.get("status") == "pendente"]
     executando = [t for t in estado.get("queue", []) if t.get("status") == "executando"]
     mercado = gerar_panorama_mercado()
@@ -179,9 +181,13 @@ def _tick_runtime():
             tarefa["status"] = "concluido"
             estado["runtime_failures_consecutive"] = 0
             estado["history"] = (estado.get("history", []) + [tarefa.copy()])[-200:]
-            _notificar(f"JARVIS: tarefa #{tarefa.get('id')} concluido. {tarefa.get('resultado', '')}")
+            _notificar(
+                f"JARVIS: tarefa #{tarefa.get('id')} concluido. {tarefa.get('resultado', '')}"
+            )
         else:
-            estado["runtime_failures_consecutive"] = int(estado.get("runtime_failures_consecutive", 0) or 0) + 1
+            estado["runtime_failures_consecutive"] = (
+                int(estado.get("runtime_failures_consecutive", 0) or 0) + 1
+            )
             tarefa["last_error"] = str(resultado.get("resumo", "") or "falha_sem_resumo")
             if tentativas < max_tentativas:
                 base = int(estado.get("retry_base_seconds", 20) or 20)
@@ -196,7 +202,9 @@ def _tick_runtime():
             else:
                 tarefa["status"] = "falhou"
                 estado["history"] = (estado.get("history", []) + [tarefa.copy()])[-200:]
-                _notificar(f"JARVIS: tarefa #{tarefa.get('id')} falhou após {tentativas} tentativas.")
+                _notificar(
+                    f"JARVIS: tarefa #{tarefa.get('id')} falhou após {tentativas} tentativas."
+                )
 
         if int(estado.get("runtime_failures_consecutive", 0) or 0) >= 3:
             _abrir_circuito(estado, segundos=75)
@@ -285,9 +293,7 @@ def status_fase2():
     falhas = len([t for t in estado.get("history", []) if t.get("status") == "falhou"])
     ligado = "ativo" if estado.get("enabled") else "desativado"
     circuito = (
-        f"aberto até {estado.get('circuit_open_until')}"
-        if _circuito_aberto(estado)
-        else "fechado"
+        f"aberto até {estado.get('circuit_open_until')}" if _circuito_aberto(estado) else "fechado"
     )
     return (
         f"JARVIS fase 2: {ligado}\n"

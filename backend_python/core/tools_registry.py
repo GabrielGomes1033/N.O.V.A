@@ -31,7 +31,9 @@ class ToolsRegistry:
         merged = dict(extra)
         merged.update(params or {})
         sig = inspect.signature(tool)
-        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        accepts_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
         if accepts_kwargs:
             return tool(**merged)
         filtered = {key: value for key, value in merged.items() if key in sig.parameters}

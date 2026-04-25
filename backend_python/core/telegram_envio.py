@@ -3,7 +3,9 @@ from __future__ import annotations
 import requests
 
 
-def enviar_mensagem_telegram(token: str, chat_id: str, mensagem: str, timeout: int = 10) -> tuple[bool, str]:
+def enviar_mensagem_telegram(
+    token: str, chat_id: str, mensagem: str, timeout: int = 10
+) -> tuple[bool, str]:
     token = (token or "").strip()
     chat_id = (chat_id or "").strip()
     mensagem = (mensagem or "").strip()

@@ -151,7 +151,11 @@ def _tool_mercado_snapshot():
             except (TypeError, ValueError):
                 chg_txt = "n/d"
             partes.append(f"{nome}: {preco} ({chg_txt})")
-        return "Panorama de mercado: " + "; ".join(partes[:6]) if partes else "Sem dados de mercado no momento."
+        return (
+            "Panorama de mercado: " + "; ".join(partes[:6])
+            if partes
+            else "Sem dados de mercado no momento."
+        )
     except Exception:
         return "Sem dados de mercado no momento."
 
@@ -207,24 +211,41 @@ def planejar_objetivo(objetivo, contexto=None):
     passos = []
 
     if not texto:
-        return [PassoPlano(acao="resumir_texto", descricao="Solicitar objetivo mais específico", parametros={"texto": "Me diga um objetivo mais específico para eu executar."})]
+        return [
+            PassoPlano(
+                acao="resumir_texto",
+                descricao="Solicitar objetivo mais específico",
+                parametros={"texto": "Me diga um objetivo mais específico para eu executar."},
+            )
+        ]
 
-    if any(k in t for k in ("organize meu dia", "organizar meu dia", "planejar meu dia", "agenda", "rotina")):
+    if any(
+        k in t
+        for k in ("organize meu dia", "organizar meu dia", "planejar meu dia", "agenda", "rotina")
+    ):
         passos.append(PassoPlano("planejar_dia", "Criar agenda priorizada", {"texto": texto}))
 
     if any(k in t for k in ("pesquis", "buscar", "procure", "sobre")):
         consulta = _extrair_consulta(texto)
-        passos.append(PassoPlano("pesquisar_web", f"Pesquisar na web sobre {consulta}", {"consulta": consulta}))
+        passos.append(
+            PassoPlano(
+                "pesquisar_web", f"Pesquisar na web sobre {consulta}", {"consulta": consulta}
+            )
+        )
 
     if any(k in t for k in ("resuma", "resumir", "resumo")) and ":" in texto:
         conteudo = texto.split(":", 1)[1].strip()
-        passos.append(PassoPlano("resumir_texto", "Resumir conteúdo informado", {"texto": conteudo}))
+        passos.append(
+            PassoPlano("resumir_texto", "Resumir conteúdo informado", {"texto": conteudo})
+        )
 
     if any(k in t for k in ("mercado", "cripto", "ibov", "bitcoin", "panorama financeiro")):
         passos.append(PassoPlano("mercado_snapshot", "Coletar panorama de mercado", {}))
 
     if any(k in t for k in ("lembre", "anote", "memorize", "guarde", "objetivo")):
-        passos.append(PassoPlano("salvar_objetivo", "Salvar objetivo na memória", {"objetivo": texto}))
+        passos.append(
+            PassoPlano("salvar_objetivo", "Salvar objetivo na memória", {"objetivo": texto})
+        )
 
     if any(k in t for k in ("relembre", "meus objetivos", "objetivos recentes", "o que eu pedi")):
         passos.append(PassoPlano("relembrar_objetivos", "Recuperar objetivos recentes", {}))
@@ -242,7 +263,9 @@ def planejar_objetivo(objetivo, contexto=None):
     if not passos:
         passos = [
             PassoPlano("hora_data", "Obter contexto temporal", {}),
-            PassoPlano("salvar_objetivo", "Registrar objetivo para continuidade", {"objetivo": texto}),
+            PassoPlano(
+                "salvar_objetivo", "Registrar objetivo para continuidade", {"objetivo": texto}
+            ),
         ]
 
     return passos
@@ -285,7 +308,9 @@ def executar_agente(objetivo, contexto=None):
             if passo.acao in {"pesquisar_wikipedia", "pesquisar_web"} and not saida:
                 passo.status = "falhou"
                 passo.erro = "Sem resumo encontrado na web."
-                observacoes.append(f"{passo.descricao}: sem resumo disponível. Posso abrir no Google se você quiser.")
+                observacoes.append(
+                    f"{passo.descricao}: sem resumo disponível. Posso abrir no Google se você quiser."
+                )
             else:
                 passo.status = "concluido"
                 passo.saida = saida

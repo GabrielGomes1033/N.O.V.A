@@ -28,7 +28,9 @@ if APIRouter is not None:
         return MemorySearchResponse(ok=True, items=items, total=len(items))
 
     @router.get("/search", response_model=MemorySearchResponse)
-    def search_memories(user_id: str = Query(...), query: str = Query(...), limit: int = 10) -> MemorySearchResponse:
+    def search_memories(
+        user_id: str = Query(...), query: str = Query(...), limit: int = 10
+    ) -> MemorySearchResponse:
         store = get_default_orchestrator().memory
         items = store.search(user_id=user_id, query=query, limit=limit)
         return MemorySearchResponse(ok=True, items=items, total=len(items))
@@ -45,5 +47,6 @@ if APIRouter is not None:
             source="api_memory",
         )
         return {"ok": True, "item": item}
+
 else:
     router = None

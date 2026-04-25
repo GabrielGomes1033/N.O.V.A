@@ -11,5 +11,7 @@ def permission_summary() -> dict[str, Any]:
         "ok": True,
         "rbac_ready": True,
         "users_total": len(users),
-        "roles": sorted({str(item.get("papel", "usuario")) for item in users if isinstance(item, dict)}),
+        "roles": sorted(
+            {str(item.get("papel", "usuario")) for item in users if isinstance(item, dict)}
+        ),
     }

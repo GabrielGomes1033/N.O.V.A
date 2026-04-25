@@ -25,7 +25,7 @@ def _limpar_nome_saudacao(nome):
     valor = valor.replace("sr.", "").replace("sra.", "")
     for prefixo in ("senhor ", "senhora "):
         if valor.lower().startswith(prefixo):
-            valor = valor[len(prefixo):]
+            valor = valor[len(prefixo) :]
             break
     return valor.strip() or "Gabriel"
 
@@ -200,11 +200,21 @@ def _mercado_cripto_resumo(ids_cripto):
 def construir_mensagem_despertador():
     cfg = carregar_config_despertador()
     memoria = carregar_memoria_usuario()
-    nome = _limpar_nome_saudacao(memoria.get("nome_usuario") or cfg.get("saudacao_nome") or "Gabriel")
+    nome = _limpar_nome_saudacao(
+        memoria.get("nome_usuario") or cfg.get("saudacao_nome") or "Gabriel"
+    )
     cidade = cfg.get("cidade", "Sao Paulo")
 
     agora = datetime.now()
-    semana = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
+    semana = [
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado",
+        "domingo",
+    ]
     dia_semana = semana[agora.weekday()]
 
     clima = _clima_resumo(cidade)

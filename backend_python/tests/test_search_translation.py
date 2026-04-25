@@ -22,9 +22,7 @@ from memory.sqlite_store import MemoryStore
 
 class SearchTranslationTests(unittest.TestCase):
     def test_parse_search_translation_request_detects_target_language(self) -> None:
-        pedido = parse_search_translation_request(
-            "traduza essa pesquisa para ingles"
-        )
+        pedido = parse_search_translation_request("traduza essa pesquisa para ingles")
         self.assertIsNotNone(pedido)
         self.assertEqual(pedido["target_language"], "en")
 
@@ -32,16 +30,12 @@ class SearchTranslationTests(unittest.TestCase):
         self.assertIsNotNone(atalho)
         self.assertEqual(atalho["target_language"], "pt")
 
-        voz = parse_search_translation_request(
-            "me fale essa pesquisa em espanhol"
-        )
+        voz = parse_search_translation_request("me fale essa pesquisa em espanhol")
         self.assertIsNotNone(voz)
         self.assertEqual(voz["target_language"], "es")
 
     def test_parse_text_translation_request_extracts_explicit_text(self) -> None:
-        pedido = parse_text_translation_request(
-            'traduza "Bom dia, mundo" para ingles'
-        )
+        pedido = parse_text_translation_request('traduza "Bom dia, mundo" para ingles')
         self.assertIsNotNone(pedido)
         self.assertEqual(pedido["source_text"], "Bom dia, mundo")
         self.assertEqual(pedido["target_language"], "en")

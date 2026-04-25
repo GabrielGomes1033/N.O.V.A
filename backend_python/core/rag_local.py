@@ -157,7 +157,12 @@ def registrar_feedback_rag(query: str, chunk_id: str, score: int = 1) -> dict:
     )
     fb["query_feedback"] = trilha[-600:]
     salvar_json_seguro(ARQUIVO_FEEDBACK, fb)
-    return {"ok": True, "chunk_id": cid, "score_aplicado": nota, "score_total_chunk": chunk_scores[cid]}
+    return {
+        "ok": True,
+        "chunk_id": cid,
+        "score_aplicado": nota,
+        "score_total_chunk": chunk_scores[cid],
+    }
 
 
 def estatisticas_feedback_rag() -> dict:

@@ -10,28 +10,70 @@ def ajuda_topicos() -> dict[str, Any]:
         {"cmd": "/autonomia status", "desc": "Mostra estado atual de autonomia e fila."},
         {"cmd": "/autonomia ligar|desligar", "desc": "Liga/desliga modo autonomia."},
         {"cmd": "/autonomia risco baixo|moderado|alto", "desc": "Define política de risco."},
-        {"cmd": "/autonomia liberdade baixa|media|alta", "desc": "Ajusta liberdade operacional da execução autônoma."},
+        {
+            "cmd": "/autonomia liberdade baixa|media|alta",
+            "desc": "Ajusta liberdade operacional da execução autônoma.",
+        },
         {"cmd": "/rag reindex [arquivos]", "desc": "Reindexa base RAG local."},
         {"cmd": "/rag <pergunta>", "desc": "Consulta base RAG com fontes."},
         {"cmd": "/google <consulta>", "desc": "Pesquisa na internet e resume."},
-        {"cmd": 'traduza "<texto>" para <idioma>', "desc": "Traduz um texto enviado na propria mensagem."},
-        {"cmd": "traduza essa pesquisa para <idioma>", "desc": "Traduz a ultima pesquisa da conversa para o idioma pedido."},
-        {"cmd": "me fale essa pesquisa em <idioma>", "desc": "Atalho natural por voz para ouvir/receber a ultima pesquisa em outro idioma."},
-        {"cmd": "agende <evento> amanha as 15:00", "desc": "Cria um evento na Google Agenda com horario natural."},
-        {"cmd": "marque reuniao em 2026-05-01 14:00 ate 15:30", "desc": "Agenda um compromisso com inicio e fim definidos."},
-        {"cmd": "pesquise no Maps por <lugar>", "desc": "Atalho local do app para abrir busca gratuita no Maps, sem SDK pago."},
-        {"cmd": "pesquise no YouTube por <tema>", "desc": "Atalho local do app para abrir busca no YouTube."},
-        {"cmd": "/modo pesquisa", "desc": "Opcional: força pesquisa web assistida de forma mais agressiva."},
-        {"cmd": "/modo conversa", "desc": "Opcional: reduz a priorização automática de pesquisa e volta ao chat mais conversacional."},
+        {
+            "cmd": 'traduza "<texto>" para <idioma>',
+            "desc": "Traduz um texto enviado na propria mensagem.",
+        },
+        {
+            "cmd": "traduza essa pesquisa para <idioma>",
+            "desc": "Traduz a ultima pesquisa da conversa para o idioma pedido.",
+        },
+        {
+            "cmd": "me fale essa pesquisa em <idioma>",
+            "desc": "Atalho natural por voz para ouvir/receber a ultima pesquisa em outro idioma.",
+        },
+        {
+            "cmd": "agende <evento> amanha as 15:00",
+            "desc": "Cria um evento na Google Agenda com horario natural.",
+        },
+        {
+            "cmd": "marque reuniao em 2026-05-01 14:00 ate 15:30",
+            "desc": "Agenda um compromisso com inicio e fim definidos.",
+        },
+        {
+            "cmd": "pesquise no Maps por <lugar>",
+            "desc": "Atalho local do app para abrir busca gratuita no Maps, sem SDK pago.",
+        },
+        {
+            "cmd": "pesquise no YouTube por <tema>",
+            "desc": "Atalho local do app para abrir busca no YouTube.",
+        },
+        {
+            "cmd": "/modo pesquisa",
+            "desc": "Opcional: força pesquisa web assistida de forma mais agressiva.",
+        },
+        {
+            "cmd": "/modo conversa",
+            "desc": "Opcional: reduz a priorização automática de pesquisa e volta ao chat mais conversacional.",
+        },
         {"cmd": "/lembrar <texto> <data/hora>", "desc": "Cria lembrete com data/hora."},
         {"cmd": "/lembretes", "desc": "Lista lembretes ativos."},
         {"cmd": "/calcular <expressao>", "desc": "Executa cálculo."},
-        {"cmd": "/projeto <nome>", "desc": "Cria projeto no destino padrão configurado (Notion ou Google Drive)."},
+        {
+            "cmd": "/projeto <nome>",
+            "desc": "Cria projeto no destino padrão configurado (Notion ou Google Drive).",
+        },
         {"cmd": "/notion projeto <nome>", "desc": "Cria projeto diretamente no Notion."},
         {"cmd": "/admin login <u> <s> [2fa]", "desc": "Login administrativo."},
-        {"cmd": "/admin 2fa status|ligar|desligar|obrigatorio on|off|codigo|rotacionar", "desc": "Gerencia 2FA admin."},
-        {"cmd": "/admin jarvis2 status|ligar|desligar|enfileirar|fila|limpar|relatorio", "desc": "Gerencia runtime JARVIS2."},
-        {"cmd": "/admin drivebackup status|sincronizar|restaurar", "desc": "Opera backup em Drive."},
+        {
+            "cmd": "/admin 2fa status|ligar|desligar|obrigatorio on|off|codigo|rotacionar",
+            "desc": "Gerencia 2FA admin.",
+        },
+        {
+            "cmd": "/admin jarvis2 status|ligar|desligar|enfileirar|fila|limpar|relatorio",
+            "desc": "Gerencia runtime JARVIS2.",
+        },
+        {
+            "cmd": "/admin drivebackup status|sincronizar|restaurar",
+            "desc": "Opera backup em Drive.",
+        },
     ]
     topicos = [
         {

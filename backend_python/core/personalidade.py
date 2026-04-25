@@ -4,34 +4,32 @@ import random
 
 # Catálogo de estilos disponíveis no aplicativo.
 modos = {
-    "normal": {
-        "prefixos": ["", "", ""],
-        "sufixos": ["", "", ""]
-    },
+    "normal": {"prefixos": ["", "", ""], "sufixos": ["", "", ""]},
     "engracado": {
         "prefixos": ["😂 Olha só...", "Hmm, interessante!", "KKKK vamos lá:"],
-        "sufixos": [" 😄", " 🤣", " (essa foi boa)"]
+        "sufixos": [" 😄", " 🤣", " (essa foi boa)"],
     },
     "formal": {
         "prefixos": ["Compreendo.", "De acordo com sua solicitação:", "Certamente."],
-        "sufixos": [" Estou à disposição.", " Caso precise de mais ajuda, informe.", ""]
+        "sufixos": [" Estou à disposição.", " Caso precise de mais ajuda, informe.", ""],
     },
     "sarcastico": {
         "prefixos": ["Ah claro...", "Nossa, que surpresa...", "Uau, ninguém esperava isso..."],
-        "sufixos": [" 🙄", " 😏", " (óbvio)"]
+        "sufixos": [" 🙄", " 😏", " (óbvio)"],
     },
     "inspirador": {
         "prefixos": ["🌟 Lembre-se:", "Aqui vai uma reflexão:", "Para você pensar:"],
-        "sufixos": [" ✨", " 💡", " 🌈"]
+        "sufixos": [" ✨", " 💡", " 🌈"],
     },
     "tecnologico": {
         "prefixos": ["🤖 Processando...", "Analisando dados:", "Sinal recebido:"],
-        "sufixos": [" ⚡", " 🛰️", " ✅"]
-    }
+        "sufixos": [" ⚡", " 🛰️", " ✅"],
+    },
 }
 
 # Guarda o modo selecionado no momento.
 modo_atual = "normal"
+
 
 def set_modo(modo):
     # Troca o modo global se o nome informado existir no catálogo.
@@ -40,6 +38,7 @@ def set_modo(modo):
         modo_atual = modo
         return f"Modo alterado para '{modo.upper()}'"
     return "Modo não encontrado."
+
 
 def estilizar(resposta):
     # Aplica pequenas variações para que a mesma resposta pareça mais viva.

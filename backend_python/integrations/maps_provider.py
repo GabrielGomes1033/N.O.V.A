@@ -71,7 +71,9 @@ def reverse_geocode(latitude: float, longitude: float) -> dict:
     }
 
 
-def search_places(query: str, latitude: float | None = None, longitude: float | None = None, limit: int = 3) -> dict:
+def search_places(
+    query: str, latitude: float | None = None, longitude: float | None = None, limit: int = 3
+) -> dict:
     consulta = str(query or "").strip()
     if not consulta:
         return {"ok": False, "error": "query_required", "items": []}
@@ -115,7 +117,12 @@ def search_places(query: str, latitude: float | None = None, longitude: float | 
             items.append(
                 {
                     "name": str(raw.get("name", "")).strip()
-                    or str(address.get("attraction") or address.get("shop") or address.get("road") or display).strip(),
+                    or str(
+                        address.get("attraction")
+                        or address.get("shop")
+                        or address.get("road")
+                        or display
+                    ).strip(),
                     "display_name": display,
                     "latitude": str(raw.get("lat", "")).strip(),
                     "longitude": str(raw.get("lon", "")).strip(),

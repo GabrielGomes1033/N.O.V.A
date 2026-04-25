@@ -103,7 +103,9 @@ def _looks_like_short_translation_followup(text: str) -> bool:
     if normalized.startswith(("em ", "para ", "in ", "to ")):
         return True
 
-    if any(ref in normalized for ref in ("isso", "essa", "esse", "pesquisa", "resposta", "resultado")):
+    if any(
+        ref in normalized for ref in ("isso", "essa", "esse", "pesquisa", "resposta", "resultado")
+    ):
         if re.search(r"\b(?:em|para|in|to)\b", normalized):
             return True
 
@@ -117,9 +119,7 @@ def parse_search_translation_request(text: str) -> dict[str, str] | None:
 
     normalized = _normalize_ascii(message)
     target_language = detect_target_language(message)
-    search_reference = any(
-        ref in normalized for ref in ("pesquisa", "resultado", "resposta")
-    )
+    search_reference = any(ref in normalized for ref in ("pesquisa", "resultado", "resposta"))
     explicit_translation = search_reference and any(
         token in normalized
         for token in (
@@ -172,9 +172,9 @@ def parse_search_translation_request(text: str) -> dict[str, str] | None:
 def _extract_explicit_text_translation_parts(message: str) -> tuple[str, str]:
     patterns = (
         r'^\s*(?:traduz(?:a|ir)?|translate)\s+(?:o\s+)?(?:texto\s+)?["\'](?P<text>.+?)["\']\s+(?:para|em|to|in)\s+(?P<lang>.+?)\s*$',
-        r'^\s*(?:traduz(?:a|ir)?|translate)\s+(?:o\s+)?(?:texto\s+)?(?:para|em|to|in)\s+(?P<lang>.+?)\s*[:\-]\s*(?P<text>.+?)\s*$',
-        r'^\s*(?:traduz(?:a|ir)?|translate)\s+(?:para|em|to|in)\s+(?P<lang>[A-Za-zÀ-ÿ_-]+(?:\s+[A-Za-zÀ-ÿ_-]+)?)\s+(?P<text>.+?)\s*$',
-        r'^\s*(?:traduz(?:a|ir)?|translate)\s+(?:o\s+)?(?:texto\s+)?(?P<text>.+?)\s+(?:para|em|to|in)\s+(?P<lang>.+?)\s*$',
+        r"^\s*(?:traduz(?:a|ir)?|translate)\s+(?:o\s+)?(?:texto\s+)?(?:para|em|to|in)\s+(?P<lang>.+?)\s*[:\-]\s*(?P<text>.+?)\s*$",
+        r"^\s*(?:traduz(?:a|ir)?|translate)\s+(?:para|em|to|in)\s+(?P<lang>[A-Za-zÀ-ÿ_-]+(?:\s+[A-Za-zÀ-ÿ_-]+)?)\s+(?P<text>.+?)\s*$",
+        r"^\s*(?:traduz(?:a|ir)?|translate)\s+(?:o\s+)?(?:texto\s+)?(?P<text>.+?)\s+(?:para|em|to|in)\s+(?P<lang>.+?)\s*$",
     )
     for pattern in patterns:
         match = re.match(pattern, message, flags=re.IGNORECASE | re.DOTALL)
@@ -215,7 +215,9 @@ def parse_text_translation_request(text: str) -> dict[str, str] | None:
         if quoted:
             source_text = _clean(quoted.group("text"))
 
-    target_language = normalize_language_code(raw_target_language) or detect_target_language(message)
+    target_language = normalize_language_code(raw_target_language) or detect_target_language(
+        message
+    )
     if not target_language:
         return {"error": "target_language_missing"}
 
@@ -258,9 +260,7 @@ def _translate_via_libretranslate(
     target_language: str,
     source_language: str,
 ) -> dict[str, Any]:
-    base_url = _clean(
-        os.getenv("NOVA_TRANSLATE_API_URL") or os.getenv("NOVA_LIBRETRANSLATE_URL")
-    )
+    base_url = _clean(os.getenv("NOVA_TRANSLATE_API_URL") or os.getenv("NOVA_LIBRETRANSLATE_URL"))
     if not base_url:
         return {"ok": False, "error": "translate_api_not_configured"}
 
@@ -284,7 +284,9 @@ def _translate_via_libretranslate(
         "ok": True,
         "translated_text": translated,
         "provider": "libretranslate",
-        "detected_source_language": str(data.get("detectedLanguage", "") or source_language or "auto"),
+        "detected_source_language": str(
+            data.get("detectedLanguage", "") or source_language or "auto"
+        ),
     }
 
 
@@ -321,7 +323,11 @@ def _translate_via_google_public(
     if not translated:
         raise ValueError("empty_translation")
 
-    detected = str(data[2]).strip() if len(data) > 2 and isinstance(data[2], str) else source_language or "auto"
+    detected = (
+        str(data[2]).strip()
+        if len(data) > 2 and isinstance(data[2], str)
+        else source_language or "auto"
+    )
     return {
         "ok": True,
         "translated_text": translated,

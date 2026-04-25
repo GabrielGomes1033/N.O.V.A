@@ -294,11 +294,15 @@ def _should_use_semantic_context(text: str) -> bool:
     if len(terms) >= 2:
         return True
     lowered = str(text or "").lower()
-    return any(token in lowered for token in ("lembra", "contexto", "projeto", "continua", "continue"))
+    return any(
+        token in lowered for token in ("lembra", "contexto", "projeto", "continua", "continue")
+    )
 
 
 class RuleBasedLLM:
-    def decide(self, text: str, context: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
+    def decide(
+        self, text: str, context: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         decision: IntentDecision = classify_intent(text)
         return asdict(decision)
 
@@ -311,7 +315,9 @@ class RuleBasedLLM:
     ) -> str:
         context_hint = _best_context_note(text, context)
         resposta_base = responder(text, contexto=response_context or {})
-        if context_hint and any(token in text.lower() for token in ("contexto", "continua", "projeto", "lembra")):
+        if context_hint and any(
+            token in text.lower() for token in ("contexto", "continua", "projeto", "lembra")
+        ):
             resposta_base = f"{resposta_base}\nContexto util: {context_hint}"
         return style_response(resposta_base, modo=mode)
 
@@ -350,17 +356,23 @@ class RuleBasedLLM:
         if tool_name == "search_memory":
             itens = result.get("items") or []
             if not itens:
-                return style_response("Nao encontrei memoria relevante sobre esse ponto ainda.", modo=mode)
+                return style_response(
+                    "Nao encontrei memoria relevante sobre esse ponto ainda.", modo=mode
+                )
             linhas = []
             for item in itens[:3]:
-                linhas.append(f"- {item.get('category', 'contexto')}: {_shorten(str(item.get('content', '')), 120)}")
+                linhas.append(
+                    f"- {item.get('category', 'contexto')}: {_shorten(str(item.get('content', '')), 120)}"
+                )
             return style_response("Encontrei isto na memoria:\n" + "\n".join(linhas), modo=mode)
 
         if tool_name == "create_reminder":
             if ok:
                 when = str(result.get("when", "")).strip()
                 sufixo = f" para {when}" if when else ""
-                return style_response(f"Lembrete criado: {result.get('title', '')}{sufixo}.", modo=mode)
+                return style_response(
+                    f"Lembrete criado: {result.get('title', '')}{sufixo}.", modo=mode
+                )
             return style_response("Nao consegui criar esse lembrete.", modo=mode)
 
         if tool_name == "create_project":
@@ -380,14 +392,19 @@ class RuleBasedLLM:
                 assumptions = (result.get("parsed") or {}).get("assumptions") or []
                 lines = [f"Evento agendado na Google Agenda: {title} em {start_at}."]
                 if assumptions:
-                    lines.append("Observacoes: " + " ".join(str(item).strip() for item in assumptions if str(item).strip()))
+                    lines.append(
+                        "Observacoes: "
+                        + " ".join(str(item).strip() for item in assumptions if str(item).strip())
+                    )
                 if link:
                     lines.append(f"Link: {link}")
                 return style_response("\n".join(lines), modo=mode)
             message = str(result.get("message", "")).strip()
             if message:
                 return style_response(message, modo=mode)
-            return style_response("Nao consegui agendar esse compromisso na Google Agenda.", modo=mode)
+            return style_response(
+                "Nao consegui agendar esse compromisso na Google Agenda.", modo=mode
+            )
 
         if tool_name == "summarize_text":
             if ok:
@@ -452,7 +469,9 @@ def build_default_tools(memory_store: MemoryStore) -> ToolsRegistry:
             "result": out,
         }
 
-    def create_project(name: str, description: str = "", user_id: str = "default") -> dict[str, Any]:
+    def create_project(
+        name: str, description: str = "", user_id: str = "default"
+    ) -> dict[str, Any]:
         result = integration_create_project(name, description=description)
         if result.get("ok"):
             memory_store.save(
@@ -585,7 +604,9 @@ class NovaOrchestrator:
         if not msg:
             return
 
-        name_match = re.search(r"\bmeu nome (?:e|eh|é)\s+([A-Za-zÀ-ÿ' -]{2,40})", msg, flags=re.IGNORECASE)
+        name_match = re.search(
+            r"\bmeu nome (?:e|eh|é)\s+([A-Za-zÀ-ÿ' -]{2,40})", msg, flags=re.IGNORECASE
+        )
         if name_match:
             nome = name_match.group(1).strip().title()
             self.profile_store.save_fact(user_id, "perfil", f"Nome preferido: {nome}", importance=4)
@@ -888,7 +909,7 @@ class NovaOrchestrator:
             target_label_pt = str(request.get("target_label_pt", "")).strip()
             reply = style_response(
                 (
-                    f'Me mande o texto junto do pedido para eu traduzir para {target_label_pt}. '
+                    f"Me mande o texto junto do pedido para eu traduzir para {target_label_pt}. "
                     'Exemplo: traduza "Bom dia" para ingles.'
                 ),
                 modo=mode,

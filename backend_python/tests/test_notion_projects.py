@@ -105,7 +105,10 @@ class PedidoCriacaoProjetoTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with patch("core.notion_projects._resolver_usuario_notion", return_value=("user_123", "Gabriel Gomes")):
+            with patch(
+                "core.notion_projects._resolver_usuario_notion",
+                return_value=("user_123", "Gabriel Gomes"),
+            ):
                 ok, payload, filled_fields, warnings = _montar_propriedades_data_source(
                     project_name="Atlas Comercial",
                     description="Descrição padrão",

@@ -40,5 +40,6 @@ if APIRouter is not None:
     def chat(body: dict):
         payload, status_code = _dispatch_chat(body if isinstance(body, dict) else {})
         return JSONResponse(content=payload, status_code=status_code)
+
 else:
     router = None

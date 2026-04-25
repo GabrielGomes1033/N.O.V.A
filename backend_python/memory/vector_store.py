@@ -88,7 +88,9 @@ def _normalize_token(token: str) -> str:
 def _build_synonym_map() -> dict[str, str]:
     out: dict[str, str] = {}
     for group in _SYNONYM_GROUPS:
-        normalized_group = sorted({_normalize_token(item) for item in group if _normalize_token(item)})
+        normalized_group = sorted(
+            {_normalize_token(item) for item in group if _normalize_token(item)}
+        )
         if not normalized_group:
             continue
         canonical = normalized_group[0]

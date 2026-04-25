@@ -30,5 +30,6 @@ if APIRouter is not None:
             mode=req.mode,
         )
         return {"ok": True, **result}
+
 else:
     router = None

@@ -150,11 +150,15 @@ def _extract_home_action(text: str) -> tuple[str, str]:
     action = ""
     if any(token in lowered for token in ("ligar", "acender", "turn on", "ativar", "abrir")):
         action = "turn_on"
-    elif any(token in lowered for token in ("desligar", "apagar", "turn off", "desativar", "fechar")):
+    elif any(
+        token in lowered for token in ("desligar", "apagar", "turn off", "desativar", "fechar")
+    ):
         action = "turn_off"
 
     entity = ""
-    match = re.search(r"\b(light|switch|scene|script|cover|fan|climate|media_player)\.[\w.-]+\b", msg)
+    match = re.search(
+        r"\b(light|switch|scene|script|cover|fan|climate|media_player)\.[\w.-]+\b", msg
+    )
     if match:
         entity = match.group(0)
     return entity, action
@@ -176,7 +180,10 @@ def classify_intent(text: str) -> IntentDecision:
                 params={"category": category, "content": content},
             )
 
-    if any(token in lowered for token in ("ligar", "desligar", "acender", "apagar", "turn on", "turn off")):
+    if any(
+        token in lowered
+        for token in ("ligar", "desligar", "acender", "apagar", "turn on", "turn off")
+    ):
         entity_id, action = _extract_home_action(msg)
         if entity_id and action:
             return IntentDecision(
@@ -194,7 +201,15 @@ def classify_intent(text: str) -> IntentDecision:
                 params={"title": title, "when": when},
             )
 
-    if any(token in lowered for token in ("o que voce lembra", "o que voce sabe sobre", "busque na memoria", "procure na memoria")):
+    if any(
+        token in lowered
+        for token in (
+            "o que voce lembra",
+            "o que voce sabe sobre",
+            "busque na memoria",
+            "procure na memoria",
+        )
+    ):
         query = re.sub(
             r"^(o que voce lembra sobre|o que voce sabe sobre|busque na memoria|procure na memoria)\s+",
             "",
@@ -202,10 +217,14 @@ def classify_intent(text: str) -> IntentDecision:
             flags=re.IGNORECASE,
         ).strip(" :,-?")
         if query:
-            return IntentDecision(type="tool_call", tool_name="search_memory", params={"query": query})
+            return IntentDecision(
+                type="tool_call", tool_name="search_memory", params={"query": query}
+            )
 
     if lowered.startswith(("/resumir", "resuma", "sumarize", "summarize")):
-        summary_input = re.sub(r"^(\/resumir|resuma|sumarize|summarize)\s*", "", msg, flags=re.IGNORECASE)
+        summary_input = re.sub(
+            r"^(\/resumir|resuma|sumarize|summarize)\s*", "", msg, flags=re.IGNORECASE
+        )
         if summary_input:
             return IntentDecision(
                 type="tool_call",
@@ -220,7 +239,9 @@ def classify_intent(text: str) -> IntentDecision:
         if query:
             return IntentDecision(type="tool_call", tool_name="search_web", params={"query": query})
 
-    if "projeto" in lowered and any(token in lowered for token in ("crie", "criar", "novo", "abra", "abrir")):
+    if "projeto" in lowered and any(
+        token in lowered for token in ("crie", "criar", "novo", "abra", "abrir")
+    ):
         name, description = _extract_project_name(msg)
         if name:
             return IntentDecision(

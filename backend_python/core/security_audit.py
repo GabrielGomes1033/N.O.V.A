@@ -218,9 +218,7 @@ def auditoria_humana() -> str:
     if achados:
         linhas.append("- Achados:")
         for a in achados[:8]:
-            linhas.append(
-                f"  * [{a.get('severidade')}] {a.get('titulo')}: {a.get('acao')}"
-            )
+            linhas.append(f"  * [{a.get('severidade')}] {a.get('titulo')}: {a.get('acao')}")
     else:
         linhas.append("- Achados: nenhum crítico no momento.")
 

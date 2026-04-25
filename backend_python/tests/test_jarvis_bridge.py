@@ -26,34 +26,34 @@ class JarvisBridgeTests(unittest.TestCase):
             )
             original = bridge.get_default_orchestrator
             bridge.get_default_orchestrator = lambda: orchestrator
-            context = {'nome_usuario': 'gabriel'}
+            context = {"nome_usuario": "gabriel"}
 
             try:
                 result = bridge.try_jarvis_tool_flow(
-                    'ligar light.sala agora',
+                    "ligar light.sala agora",
                     context,
-                    mode='normal',
+                    mode="normal",
                 )
                 confirm = bridge.process_pending_tool_confirmation(
-                    'sim',
+                    "sim",
                     context,
-                    mode='normal',
+                    mode="normal",
                 )
             finally:
                 bridge.get_default_orchestrator = original
 
         self.assertIsNotNone(result)
-        self.assertTrue(result['approval_needed'])
-        self.assertIsInstance(context.get('jarvis_tool_pending'), type(None))
-        self.assertTrue(confirm['handled'])
-        self.assertIn('reply', confirm)
+        self.assertTrue(result["approval_needed"])
+        self.assertIsInstance(context.get("jarvis_tool_pending"), type(None))
+        self.assertTrue(confirm["handled"])
+        self.assertIn("reply", confirm)
 
     def test_status_snapshot_lists_tools(self) -> None:
         snapshot = bridge.jarvis_status_snapshot()
-        self.assertTrue(snapshot['ok'])
-        self.assertGreaterEqual(snapshot['tools_total'], 1)
-        self.assertIn('search_web', snapshot['tools'])
+        self.assertTrue(snapshot["ok"])
+        self.assertGreaterEqual(snapshot["tools_total"], 1)
+        self.assertIn("search_web", snapshot["tools"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

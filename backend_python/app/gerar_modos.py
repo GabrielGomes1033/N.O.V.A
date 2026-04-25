@@ -7,25 +7,37 @@ modos = ["normal", "engracado", "tecnologico"]
 
 # Intenções com frases base
 intencoes = {
-    "saudacao": [
-        "Oi", "Olá", "E aí", "Salve", "Oiê", "Fala", "Hey", "Bem-vindo"
-    ],
+    "saudacao": ["Oi", "Olá", "E aí", "Salve", "Oiê", "Fala", "Hey", "Bem-vindo"],
     "pergunta_nome": [
-        "Sou a NOVA", "Pode me chamar de NOVA", "Eu sou a NOVA", "Aqui é a NOVA, sua assistente"
+        "Sou a NOVA",
+        "Pode me chamar de NOVA",
+        "Eu sou a NOVA",
+        "Aqui é a NOVA, sua assistente",
     ],
     "hora": [
-        "Agora são {hora}", "Olha no relógio, são {hora}", "Hora atual: {hora}", "Neste momento temos {hora}"
+        "Agora são {hora}",
+        "Olha no relógio, são {hora}",
+        "Hora atual: {hora}",
+        "Neste momento temos {hora}",
     ],
     "data": [
-        "Hoje é {data}", "A data de hoje é {data}", "Estamos em {data}", "No calendário, é {data}"
+        "Hoje é {data}",
+        "A data de hoje é {data}",
+        "Estamos em {data}",
+        "No calendário, é {data}",
     ],
     "desconhecido": [
-        "Hmm... não entendi", "Pode repetir?", "Não captei isso", "Hã? 😵", "Repete, por favor", "Confesso que não entendi"
-    ]
+        "Hmm... não entendi",
+        "Pode repetir?",
+        "Não captei isso",
+        "Hã? 😵",
+        "Repete, por favor",
+        "Confesso que não entendi",
+    ],
 }
 
 # Emojis para dar personalidade
-emojis = ["😄","😎","🤖","🌟","😂","😅","🤪","👋","😉","🤔"]
+emojis = ["😄", "😎", "🤖", "🌟", "😂", "😅", "🤪", "👋", "😉", "🤔"]
 
 # Gírias e pequenas variações para deixar mais humano
 variacoes = ["", " hein?", " 😜", " haha", " 😏", " 🤩", " 😉"]

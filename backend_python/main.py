@@ -12,6 +12,7 @@ if str(BASE_DIR) not in sys.path:
 try:
     from core.logger import logger
 except (ImportError, AttributeError):
+
     class _FallbackLogger:
         def warning(self, event: str, **fields) -> None:
             return None
@@ -21,12 +22,14 @@ except (ImportError, AttributeError):
 
     logger = _FallbackLogger()
 
+
 # =========================
 # LOG DE ERRO
 # =========================
 def registrar_erro(exc):
     logger.error("unhandled_error", exc_info=(type(exc), exc, exc.__traceback__))
     from traceback import format_exception
+
     caminho = Path("erro_log.txt")
     conteudo = "".join(format_exception(type(exc), exc, exc.__traceback__))
     caminho.write_text(conteudo, encoding="utf-8")
@@ -43,104 +46,138 @@ def _log_warning(evento: str, exc: BaseException, **fields) -> None:
 def responder(texto, respostas_txt=None, modo="normal", arquivo_aprendizado=None, contexto=None):
     return "Ainda estou em modo básico."
 
+
 def carregar_aprendizado(_arquivo=None):
     return {}
+
 
 def detectar_intencao(texto, contexto=None):
     return "desconhecida"
 
+
 def extrair_nome_usuario(texto):
     return ""
+
 
 def salvar_aprendizado(pergunta, resposta):
     return 1
 
+
 def gerar_pesquisa_wikipedia(_):
     return None
+
 
 def falar(_):
     return False
 
+
 def executar_agente(objetivo, contexto=None):
     return {"mensagem": "Modo agente indisponível no momento.", "confirmacao_pendente": None}
+
 
 def processar_confirmacao_agente(texto, contexto=None):
     return None
 
+
 def eh_pedido_de_agente(texto):
     return False
+
 
 def carregar_memoria_usuario():
     return {"nome_usuario": "", "idioma_preferido": "pt", "tratamento": "", "topicos_favoritos": []}
 
+
 def salvar_memoria_usuario(memoria):
     return memoria
+
 
 def formatar_memoria_usuario(memoria):
     return f"Memória atual: {memoria}"
 
+
 def registrar_interacao_usuario(entrada, resposta):
     return None
+
 
 def autenticar_admin(usuario, senha):
     return False
 
+
 def configurar_admin(usuario, senha):
     return False, "Admin indisponível."
+
 
 def status_admin():
     return "Admin indisponível."
 
+
 def explicacao_completa_admin():
     return "Admin indisponível."
+
 
 def iniciar_monitor_despertador(falar_callback=None, imprimir_callback=None):
     return None
 
+
 def status_despertador():
     return "Despertador indisponível."
+
 
 def configurar_despertador(hora, cidade=None, saudacao_nome=None, ativo=None):
     return False, "Despertador indisponível."
 
+
 def ativar_despertador():
     return "Despertador indisponível."
+
 
 def desativar_despertador():
     return "Despertador indisponível."
 
+
 def disparar_despertador(falar_callback=None, imprimir_callback=None, forcar=False):
     return False, "Despertador indisponível."
+
 
 def iniciar_runtime_fase2(callback_notificacao=None):
     return None
 
+
 def ligar_fase2(report_interval_min=30):
     return "JARVIS fase 2 indisponível."
+
 
 def desligar_fase2():
     return "JARVIS fase 2 indisponível."
 
+
 def enfileirar_tarefa_fase2(objetivo, origem="manual"):
     return False, "JARVIS fase 2 indisponível."
+
 
 def listar_fila_fase2(limit=12):
     return "JARVIS fase 2 indisponível."
 
+
 def limpar_fila_fase2():
     return "JARVIS fase 2 indisponível."
+
 
 def status_fase2():
     return "JARVIS fase 2 indisponível."
 
+
 def relatorio_agora_fase2():
     return "JARVIS fase 2 indisponível."
+
 
 def status_backup_drive():
     return "Backup Drive indisponível."
 
+
 def sincronizar_backup_drive():
     return False, "Backup Drive indisponível."
+
 
 def restaurar_backup_drive():
     return False, "Backup Drive indisponível."
@@ -150,12 +187,28 @@ def restaurar_backup_drive():
 # IMPORTA CORE (se existir)
 # =========================
 try:
-    from core.respostas import responder, detectar_intencao, extrair_nome_usuario, salvar_aprendizado, carregar_aprendizado
+    from core.respostas import (
+        responder,
+        detectar_intencao,
+        extrair_nome_usuario,
+        salvar_aprendizado,
+        carregar_aprendizado,
+    )
     from core.pesquisa import gerar_pesquisa_wikipedia
     from core.voz import falar
     from core.agente import executar_agente, processar_confirmacao_agente, eh_pedido_de_agente
-    from core.memoria import carregar_memoria_usuario, salvar_memoria_usuario, formatar_memoria_usuario, registrar_interacao_usuario
-    from core.admin import autenticar_admin, configurar_admin, status_admin, explicacao_completa_admin
+    from core.memoria import (
+        carregar_memoria_usuario,
+        salvar_memoria_usuario,
+        formatar_memoria_usuario,
+        registrar_interacao_usuario,
+    )
+    from core.admin import (
+        autenticar_admin,
+        configurar_admin,
+        status_admin,
+        explicacao_completa_admin,
+    )
     from core.despertador import (
         iniciar_monitor_despertador,
         status_despertador,
@@ -174,7 +227,11 @@ try:
         status_fase2,
         relatorio_agora as relatorio_agora_fase2,
     )
-    from core.backup_drive import status_backup_drive, sincronizar_backup_drive, restaurar_backup_drive
+    from core.backup_drive import (
+        status_backup_drive,
+        sincronizar_backup_drive,
+        restaurar_backup_drive,
+    )
 except (ImportError, AttributeError) as e:
     registrar_erro(e)
 
@@ -196,6 +253,7 @@ except (ImportError, AttributeError) as exc:
 
     def try_jarvis_tool_flow(texto, contexto=None, mode="normal"):
         return None
+
 
 # Migração automática para camada segura de persistência.
 for bootstrap_name, bootstrap_fn in (
@@ -304,7 +362,9 @@ def comando_agente(texto):
     else:
         objetivo = texto.strip()
     if not objetivo:
-        print("NOVA: Use /nova <objetivo>. Exemplo: /nova organize meu dia: estudar, mercado, treino")
+        print(
+            "NOVA: Use /nova <objetivo>. Exemplo: /nova organize meu dia: estudar, mercado, treino"
+        )
         return
 
     resultado = executar_agente(objetivo, contexto=contexto)
@@ -398,7 +458,9 @@ def comando_admin(texto):
                 cidade = partes[4]
             if len(partes) >= 6:
                 nome = " ".join(partes[5:])
-            ok, msg = configurar_despertador(hora=hora, cidade=cidade, saudacao_nome=nome, ativo=True)
+            ok, msg = configurar_despertador(
+                hora=hora, cidade=cidade, saudacao_nome=nome, ativo=True
+            )
             if ok:
                 iniciar_monitor_despertador(
                     falar_callback=falar,
@@ -447,7 +509,9 @@ def comando_admin(texto):
                     intervalo = int(partes[3])
                 except ValueError:
                     intervalo = 30
-            iniciar_runtime_fase2(callback_notificacao=lambda m: (print("NOVA (JARVIS):", m), falar(m)))
+            iniciar_runtime_fase2(
+                callback_notificacao=lambda m: (print("NOVA (JARVIS):", m), falar(m))
+            )
             print("NOVA:", ligar_fase2(intervalo))
             return
         if sub == "desligar":
@@ -478,7 +542,9 @@ def comando_admin(texto):
             print("NOVA: Comando restrito. Faça /admin login primeiro.")
             return
         if len(partes) < 3:
-            print("NOVA: /admin drivebackup status | /admin drivebackup sincronizar | /admin drivebackup restaurar")
+            print(
+                "NOVA: /admin drivebackup status | /admin drivebackup sincronizar | /admin drivebackup restaurar"
+            )
             return
         sub = partes[2].lower()
         if sub == "status":

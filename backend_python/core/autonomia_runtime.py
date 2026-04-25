@@ -35,11 +35,13 @@ def ler_config_autonomia() -> dict[str, Any]:
             "autonomia_ativa": bool(cfg.get("autonomia_ativa", out["autonomia_ativa"])),
             "autonomia_nivel_risco": str(
                 cfg.get("autonomia_nivel_risco", out["autonomia_nivel_risco"])
-            ).strip().lower()
+            )
+            .strip()
+            .lower()
             or "moderado",
-            "autonomia_liberdade": str(
-                cfg.get("autonomia_liberdade", out["autonomia_liberdade"])
-            ).strip().lower()
+            "autonomia_liberdade": str(cfg.get("autonomia_liberdade", out["autonomia_liberdade"]))
+            .strip()
+            .lower()
             or "media",
             "autonomia_requer_confirmacao_sensivel": bool(
                 cfg.get(

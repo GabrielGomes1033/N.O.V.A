@@ -36,9 +36,7 @@ class SpeechAndMapsTests(unittest.TestCase):
         )
 
     def test_preparar_texto_para_fala_converte_moeda_data_hora(self) -> None:
-        texto = preparar_texto_para_fala(
-            "Agora sao 18:30. Dolar US$ 5.40. Hoje e 19/04/2026."
-        )
+        texto = preparar_texto_para_fala("Agora sao 18:30. Dolar US$ 5.40. Hoje e 19/04/2026.")
         self.assertIn("seis e meia da tarde", texto)
         self.assertIn("cinco dolares e quarenta centavos", texto)
         self.assertIn("dezenove de abril de dois mil e vinte e seis", texto)

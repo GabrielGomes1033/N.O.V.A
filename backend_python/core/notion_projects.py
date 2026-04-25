@@ -213,9 +213,7 @@ def _extrair_prioridade(texto: str) -> str:
 def _extrair_responsavel(texto: str) -> str:
     return _extrair_segmento(
         texto,
-        (
-            r"(?:com\s+)?respons[aá]vel\s+(?:e|é)?",
-        ),
+        (r"(?:com\s+)?respons[aá]vel\s+(?:e|é)?",),
     )
 
 
@@ -238,7 +236,12 @@ def _limpar_nome_extraido(nome: str) -> str:
         return ""
 
     t = t.strip(" \t\n\r.,:;!?-")
-    t = re.sub(r"^(chamado|chamada|com o nome|nome(?: do projeto)?(?: e| é)?|intitulado|batizado(?: como)?)\s+", "", t, flags=re.IGNORECASE)
+    t = re.sub(
+        r"^(chamado|chamada|com o nome|nome(?: do projeto)?(?: e| é)?|intitulado|batizado(?: como)?)\s+",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    )
     t = re.sub(r"^(e\s+)?(o\s+)?nome(?: do projeto)?\s+", "", t, flags=re.IGNORECASE)
     t = re.sub(r"^(pra|para)\s+", "", t, flags=re.IGNORECASE)
     t = re.sub(r"\s+(por favor|pra mim|para mim)$", "", t, flags=re.IGNORECASE)
@@ -280,7 +283,9 @@ def provider_padrao_projeto() -> str:
 
 
 def notion_disponivel() -> bool:
-    return bool(_notion_token() and (_notion_data_source_id() or _notion_page_id() or _notion_database_id()))
+    return bool(
+        _notion_token() and (_notion_data_source_id() or _notion_page_id() or _notion_database_id())
+    )
 
 
 def interpretar_pedido_criacao_projeto(texto: str) -> PedidoCriacaoProjeto:
@@ -432,7 +437,9 @@ def _friendly_notion_error(status_code: int, message: str) -> str:
     return f"Falha na API do Notion ({status_code})."
 
 
-def _notion_request(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[bool, dict[str, Any] | str]:
+def _notion_request(
+    method: str, path: str, payload: dict[str, Any] | None = None
+) -> tuple[bool, dict[str, Any] | str]:
     try:
         resp = requests.request(
             method,
@@ -663,7 +670,9 @@ def _montar_propriedades_data_source(
     )
     priority_value = _limpar_valor_campo(str(info.get("priority") or ""))
     if priority_property and priority_value:
-        priority_meta = props.get(priority_property) if isinstance(props.get(priority_property), dict) else {}
+        priority_meta = (
+            props.get(priority_property) if isinstance(props.get(priority_property), dict) else {}
+        )
         priority_name = _resolver_nome_opcao(priority_meta, priority_value)
         notion_properties[priority_property] = {"select": {"name": priority_name}}
         filled_fields.append(priority_property)

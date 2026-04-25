@@ -19,5 +19,6 @@ if APIRouter is not None:
             "phase": "planned",
             "message": "Voice pipeline is scaffolded and ready for Phase 2 wiring.",
         }
+
 else:
     router = None

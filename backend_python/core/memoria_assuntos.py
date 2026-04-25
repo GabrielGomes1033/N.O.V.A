@@ -191,11 +191,19 @@ def perfil_assuntos(limit: int = 8) -> dict[str, Any]:
                 "last_seen": str(v.get("last_seen", "") or ""),
                 "last_source": str(v.get("last_source", "") or ""),
                 "top_keywords": top,
-                "latest_summary": (v.get("summaries", []) or [""])[-1] if isinstance(v.get("summaries"), list) and v.get("summaries") else "",
+                "latest_summary": (
+                    (v.get("summaries", []) or [""])[-1]
+                    if isinstance(v.get("summaries"), list) and v.get("summaries")
+                    else ""
+                ),
             }
         )
     items.sort(key=lambda x: x["count"], reverse=True)
-    return {"ok": True, "updated_at": db.get("updated_at", ""), "items": items[: max(1, int(limit))]}
+    return {
+        "ok": True,
+        "updated_at": db.get("updated_at", ""),
+        "items": items[: max(1, int(limit))],
+    }
 
 
 def dica_contextual_para_pergunta(pergunta: str) -> str:

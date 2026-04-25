@@ -61,7 +61,9 @@ if APIRouter is not None:
     @router.get("/security/audit")
     def security_audit(
         token: bool = Depends(require_token()),
-        role_ok: bool = Depends(require_rbac("admin", "security", error_detail="rbac_forbidden_security")),
+        role_ok: bool = Depends(
+            require_rbac("admin", "security", error_detail="rbac_forbidden_security")
+        ),
     ):
         return {"ok": True, "audit": executar_auditoria_seguranca()}
 
@@ -69,7 +71,9 @@ if APIRouter is not None:
     def audit_history(
         limit: int = Query(default=30, ge=1, le=100),
         token: bool = Depends(require_token()),
-        role_ok: bool = Depends(require_rbac("admin", "security", error_detail="rbac_forbidden_security")),
+        role_ok: bool = Depends(
+            require_rbac("admin", "security", error_detail="rbac_forbidden_security")
+        ),
     ):
         return {"ok": True, "items": obter_historico_auditoria(limit=limit)}
 
@@ -77,15 +81,20 @@ if APIRouter is not None:
     def session_audit(
         limit: int = Query(default=120, ge=1, le=500),
         token: bool = Depends(require_token()),
-        role_ok: bool = Depends(require_rbac("admin", "security", error_detail="rbac_forbidden_security")),
+        role_ok: bool = Depends(
+            require_rbac("admin", "security", error_detail="rbac_forbidden_security")
+        ),
     ):
         return {"ok": True, "items": listar_auditoria_sessao(limit=limit)}
 
     @router.get("/security/session-audit/verify")
     def verify_session_audit(
         token: bool = Depends(require_token()),
-        role_ok: bool = Depends(require_rbac("admin", "security", error_detail="rbac_forbidden_security")),
+        role_ok: bool = Depends(
+            require_rbac("admin", "security", error_detail="rbac_forbidden_security")
+        ),
     ):
         return validar_cadeia_auditoria()
+
 else:
     router = None

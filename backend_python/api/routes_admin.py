@@ -18,6 +18,7 @@ from core.painel_admin import (
 from core.aprendizado_admin import listar_aprendizados
 from .dependencies import rate_limit, require_rbac, require_token
 
+
 # Temp state for migration (migrate to DB later)
 def _estado_admin():
     return {
@@ -27,6 +28,7 @@ def _estado_admin():
         "users": listar_usuarios(),
         "config": carregar_config_painel(),
     }
+
 
 if APIRouter is not None:
     router = APIRouter(
@@ -81,5 +83,6 @@ if APIRouter is not None:
         if not ok:
             raise HTTPException(status_code=404, detail="user_not_found")
         return {"ok": True, "removed": True, "users": listar_usuarios()}
+
 else:
     router = None

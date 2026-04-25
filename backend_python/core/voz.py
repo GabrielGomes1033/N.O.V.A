@@ -111,13 +111,30 @@ def _pontuacao_humana(texto):
     for origem, destino in EXPRESSOES_MAIS_HUMANAS.items():
         texto = texto.replace(origem, destino)
 
-    texto = re.sub(r"\b(timestamp atual|registro temporal ativo)\b", "agora", texto, flags=re.IGNORECASE)
+    texto = re.sub(
+        r"\b(timestamp atual|registro temporal ativo)\b", "agora", texto, flags=re.IGNORECASE
+    )
     texto = re.sub(r"\bidentificação\b", "eu sou", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\bmodo alterado para\b", "agora estou no modo", texto, flags=re.IGNORECASE)
-    texto = re.sub(r"\bpesquisa iniciada no google para\b", "pesquisei no Google por", texto, flags=re.IGNORECASE)
-    texto = re.sub(r"\bnão consegui abrir o navegador automaticamente, mas aqui está sua pesquisa\b", "não consegui abrir o navegador, mas a pesquisa está no chat", texto, flags=re.IGNORECASE)
+    texto = re.sub(
+        r"\bpesquisa iniciada no google para\b",
+        "pesquisei no Google por",
+        texto,
+        flags=re.IGNORECASE,
+    )
+    texto = re.sub(
+        r"\bnão consegui abrir o navegador automaticamente, mas aqui está sua pesquisa\b",
+        "não consegui abrir o navegador, mas a pesquisa está no chat",
+        texto,
+        flags=re.IGNORECASE,
+    )
     texto = re.sub(r"\beu poderei responder\b", "eu vou responder", texto, flags=re.IGNORECASE)
-    texto = re.sub(r"\btotal de respostas ensinadas para essa pergunta\b", "agora eu sei", texto, flags=re.IGNORECASE)
+    texto = re.sub(
+        r"\btotal de respostas ensinadas para essa pergunta\b",
+        "agora eu sei",
+        texto,
+        flags=re.IGNORECASE,
+    )
     texto = re.sub(r"\bNOVA\b", "Nova", texto)
     texto = re.sub(r"\s+", " ", texto).strip(" ,.-")
 

@@ -93,7 +93,9 @@ def adicionar_usuario(nome: str, papel: str = "usuario") -> dict:
     return novo
 
 
-def atualizar_usuario(user_id: str, nome: str | None = None, ativo: bool | None = None, papel: str | None = None) -> dict | None:
+def atualizar_usuario(
+    user_id: str, nome: str | None = None, ativo: bool | None = None, papel: str | None = None
+) -> dict | None:
     usuarios = listar_usuarios()
     for user in usuarios:
         if user.get("id") != user_id:

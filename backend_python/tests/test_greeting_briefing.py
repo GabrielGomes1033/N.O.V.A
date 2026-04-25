@@ -25,8 +25,12 @@ class GreetingBriefingTests(unittest.TestCase):
 
     def test_briefing_proativo_usa_saudacao_do_periodo(self) -> None:
         with patch("core.nova_unica.saudacao_por_periodo", return_value="Boa noite"):
-            with patch("core.nova_unica.carregar_memoria_usuario", return_value={"nome_usuario": "Gabriel"}):
-                with patch("core.nova_unica.consultar_clima", return_value="céu limpo em São Paulo."):
+            with patch(
+                "core.nova_unica.carregar_memoria_usuario", return_value={"nome_usuario": "Gabriel"}
+            ):
+                with patch(
+                    "core.nova_unica.consultar_clima", return_value="céu limpo em São Paulo."
+                ):
                     with patch("core.nova_unica.cotacoes_financeiras", return_value={}):
                         with patch(
                             "core.nova_unica.formatar_cotacoes_humanas",
@@ -53,10 +57,20 @@ class GreetingBriefingTests(unittest.TestCase):
 
             with patch("api_server.detectar_intencao", return_value="saudacao"):
                 with patch("api_server.responder", return_value="Olá!"):
-                    with patch("api_server.briefing_automatico_se_necessario", return_value=briefing):
-                        with patch("api_server.carregar_memoria_usuario", return_value={"nome_usuario": "Gabriel"}):
-                            with patch("api_server.atualizar_perfil_por_interacao", return_value={}):
-                                with patch("api_server.aplicar_identidade_nova", side_effect=lambda texto, **_: texto):
+                    with patch(
+                        "api_server.briefing_automatico_se_necessario", return_value=briefing
+                    ):
+                        with patch(
+                            "api_server.carregar_memoria_usuario",
+                            return_value={"nome_usuario": "Gabriel"},
+                        ):
+                            with patch(
+                                "api_server.atualizar_perfil_por_interacao", return_value={}
+                            ):
+                                with patch(
+                                    "api_server.aplicar_identidade_nova",
+                                    side_effect=lambda texto, **_: texto,
+                                ):
                                     with patch("api_server.registrar_interacao_usuario"):
                                         with patch("api_server.registrar_metrica"):
                                             with patch("api_server.registrar_trace"):

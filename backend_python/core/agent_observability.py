@@ -96,4 +96,3 @@ def resumo_traces(janela: int = 200) -> dict:
         "por_evento": por_evento,
         "alertas": alertas,
     }
-

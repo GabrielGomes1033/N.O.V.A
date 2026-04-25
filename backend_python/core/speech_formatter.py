@@ -321,7 +321,9 @@ def timestamp_por_extenso(texto: str) -> str:
     return f"{data_por_extenso(dt.strftime('%Y-%m-%d'))}, {hora_por_extenso(dt.strftime('%H:%M'))}"
 
 
-def coordenadas_por_extenso(latitude: Decimal | float | int | str, longitude: Decimal | float | int | str) -> str:
+def coordenadas_por_extenso(
+    latitude: Decimal | float | int | str, longitude: Decimal | float | int | str
+) -> str:
     lat = _parse_decimal_guess(str(latitude))
     lon = _parse_decimal_guess(str(longitude))
     if lat is None or lon is None:

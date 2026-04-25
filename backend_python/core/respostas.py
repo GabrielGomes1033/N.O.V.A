@@ -515,16 +515,32 @@ def responder_com_contexto(intencao, respostas, msg, contexto):
     if intencao == "como_esta" and contexto.get("ultima_intencao") == "emocao_usuario":
         return random.choice(
             [
-                f"Estou bem, {identificador_usuario}. E quero continuar aqui com você. Se quiser, me conta mais do que está sentindo." if identificador_usuario else "Estou bem, e quero continuar aqui com você. Se quiser, me conta mais do que está sentindo.",
-                f"Estou bem por aqui, {identificador_usuario}. E eu posso continuar te ouvindo, se você quiser falar mais." if identificador_usuario else "Estou bem por aqui. E eu posso continuar te ouvindo, se você quiser falar mais.",
-                f"Estou bem, sim, {identificador_usuario}. E sigo com você nessa conversa." if identificador_usuario else "Estou bem, sim. E sigo com você nessa conversa.",
+                (
+                    f"Estou bem, {identificador_usuario}. E quero continuar aqui com você. Se quiser, me conta mais do que está sentindo."
+                    if identificador_usuario
+                    else "Estou bem, e quero continuar aqui com você. Se quiser, me conta mais do que está sentindo."
+                ),
+                (
+                    f"Estou bem por aqui, {identificador_usuario}. E eu posso continuar te ouvindo, se você quiser falar mais."
+                    if identificador_usuario
+                    else "Estou bem por aqui. E eu posso continuar te ouvindo, se você quiser falar mais."
+                ),
+                (
+                    f"Estou bem, sim, {identificador_usuario}. E sigo com você nessa conversa."
+                    if identificador_usuario
+                    else "Estou bem, sim. E sigo com você nessa conversa."
+                ),
             ]
         )
 
     if intencao == "idioma":
         return random.choice(
             [
-                f"Vou responder sempre em português, {identificador_usuario}, para manter naturalidade e consistência." if identificador_usuario else "Vou responder sempre em português, para manter naturalidade e consistência.",
+                (
+                    f"Vou responder sempre em português, {identificador_usuario}, para manter naturalidade e consistência."
+                    if identificador_usuario
+                    else "Vou responder sempre em português, para manter naturalidade e consistência."
+                ),
                 "Posso entender termos em outros idiomas, mas minha resposta padrão vai ficar em português.",
                 "Para sua experiência ficar estável, mantenho as respostas em português mesmo quando a pergunta vier em outro idioma.",
             ]
@@ -553,7 +569,11 @@ def responder_com_contexto(intencao, respostas, msg, contexto):
         if any(p in texto for p in ("triste", "sad")):
             return random.choice(
                 [
-                    f"Sinto muito que você esteja assim, {identificador_usuario}. Se quiser, pode me contar o que aconteceu e eu fico com você nessa conversa." if identificador_usuario else "Sinto muito que você esteja assim. Se quiser, pode me contar o que aconteceu e eu fico com você nessa conversa.",
+                    (
+                        f"Sinto muito que você esteja assim, {identificador_usuario}. Se quiser, pode me contar o que aconteceu e eu fico com você nessa conversa."
+                        if identificador_usuario
+                        else "Sinto muito que você esteja assim. Se quiser, pode me contar o que aconteceu e eu fico com você nessa conversa."
+                    ),
                     "Poxa, sinto muito. Se quiser desabafar um pouco, eu posso te ouvir.",
                     "Entendo. Se quiser, me fala mais sobre isso e eu tento te acompanhar da melhor forma.",
                 ]
@@ -561,7 +581,11 @@ def responder_com_contexto(intencao, respostas, msg, contexto):
         if any(p in texto for p in ("feliz", "happy")):
             return random.choice(
                 [
-                    f"Que bom ouvir isso, {identificador_usuario}. Gosto quando a conversa chega com essa energia boa." if identificador_usuario else "Que bom ouvir isso. Gosto quando a conversa chega com essa energia boa.",
+                    (
+                        f"Que bom ouvir isso, {identificador_usuario}. Gosto quando a conversa chega com essa energia boa."
+                        if identificador_usuario
+                        else "Que bom ouvir isso. Gosto quando a conversa chega com essa energia boa."
+                    ),
                     "Isso é ótimo. Se quiser, me conta o motivo da felicidade.",
                     "Fico feliz de saber. Dá até vontade de continuar o papo por aí.",
                 ]
@@ -569,7 +593,11 @@ def responder_com_contexto(intencao, respostas, msg, contexto):
         if any(p in texto for p in ("cansad", "tired")):
             return random.choice(
                 [
-                    f"Imagino, {identificador_usuario}. Quando quiser, a gente pode manter a conversa mais leve e tranquila." if identificador_usuario else "Imagino. Quando quiser, a gente pode manter a conversa mais leve e tranquila.",
+                    (
+                        f"Imagino, {identificador_usuario}. Quando quiser, a gente pode manter a conversa mais leve e tranquila."
+                        if identificador_usuario
+                        else "Imagino. Quando quiser, a gente pode manter a conversa mais leve e tranquila."
+                    ),
                     "Poxa, entendo. Se quiser, posso responder de forma mais direta para não te cansar mais.",
                     "Faz sentido. Se quiser, me diz no que posso te ajudar de um jeito mais simples agora.",
                 ]
@@ -578,7 +606,13 @@ def responder_com_contexto(intencao, respostas, msg, contexto):
     return None
 
 
-def responder(msg, respostas_txt=ARQUIVO_MODOS, modo="normal", arquivo_aprendizado=ARQUIVO_APRENDIZADO, contexto=None):
+def responder(
+    msg,
+    respostas_txt=ARQUIVO_MODOS,
+    modo="normal",
+    arquivo_aprendizado=ARQUIVO_APRENDIZADO,
+    contexto=None,
+):
     # Fluxo principal de resposta:
     # 1. tenta responder com base no que foi aprendido
     # 2. se não achar, usa as intenções e respostas padrão do modo atual

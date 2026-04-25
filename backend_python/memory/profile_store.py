@@ -30,5 +30,7 @@ class ProfileStore:
         facts = self.memory_store.search_recent(user_id=user_id, limit=limit, scope="perfil")
         if facts:
             return facts
-        preferencias = self.memory_store.search_by_category(user_id=user_id, category="preferencia", limit=limit)
+        preferencias = self.memory_store.search_by_category(
+            user_id=user_id, category="preferencia", limit=limit
+        )
         return preferencias

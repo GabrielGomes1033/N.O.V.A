@@ -9,9 +9,7 @@ import requests
 
 
 TIMEOUT_PADRAO = 4
-WIKIPEDIA_HEADERS = {
-    "User-Agent": "NOVA-Assistente/1.0 (resumo de pesquisa local)"
-}
+WIKIPEDIA_HEADERS = {"User-Agent": "NOVA-Assistente/1.0 (resumo de pesquisa local)"}
 
 
 def _limpar_texto(texto: str) -> str:

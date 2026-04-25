@@ -99,7 +99,11 @@ def decidir_aprovacao(
             _save(db)
             return {"ok": True, "message": "Solicitação rejeitada.", "request": item}
 
-        if any(str(x.get("approver", "")).strip().lower() == aprob.lower() for x in approvals if isinstance(x, dict)):
+        if any(
+            str(x.get("approver", "")).strip().lower() == aprob.lower()
+            for x in approvals
+            if isinstance(x, dict)
+        ):
             return {"ok": False, "error": "approver_already_signed"}
 
         approvals.append(

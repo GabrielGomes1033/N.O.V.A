@@ -89,7 +89,12 @@ def _totp(secret_b32: str, ts: int | None = None, step: int = 30, digits: int = 
     counter = int(ts // step).to_bytes(8, "big")
     digest = hmac.new(key, counter, hashlib.sha1).digest()
     off = digest[-1] & 0x0F
-    code_int = ((digest[off] & 0x7F) << 24) | ((digest[off + 1] & 0xFF) << 16) | ((digest[off + 2] & 0xFF) << 8) | (digest[off + 3] & 0xFF)
+    code_int = (
+        ((digest[off] & 0x7F) << 24)
+        | ((digest[off + 1] & 0xFF) << 16)
+        | ((digest[off + 2] & 0xFF) << 8)
+        | (digest[off + 3] & 0xFF)
+    )
     return str(code_int % (10**digits)).zfill(digits)
 
 
@@ -112,11 +117,15 @@ def configurar_admin_2fa(ativo: bool, secret: str = ""):
             secret = base64.b32encode(raw).decode("ascii").rstrip("=")
         cfg["admin_2fa_ativo"] = True
         cfg["admin_2fa_secret"] = secret
-        cfg = _registrar_sessao("2fa_ativado", usuario=str(cfg.get("usuario_admin", "")), ok=True, cfg=cfg)
+        cfg = _registrar_sessao(
+            "2fa_ativado", usuario=str(cfg.get("usuario_admin", "")), ok=True, cfg=cfg
+        )
     else:
         cfg["admin_2fa_ativo"] = False
         cfg["admin_2fa_secret"] = ""
-        cfg = _registrar_sessao("2fa_desativado", usuario=str(cfg.get("usuario_admin", "")), ok=True, cfg=cfg)
+        cfg = _registrar_sessao(
+            "2fa_desativado", usuario=str(cfg.get("usuario_admin", "")), ok=True, cfg=cfg
+        )
     cfg["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
     salvar_json_seguro(ARQUIVO_ADMIN, cfg)
     return cfg
@@ -205,7 +214,11 @@ def autenticar_admin(usuario, senha, codigo_2fa: str = ""):
 
 def status_admin():
     config = carregar_config_admin()
-    aviso = "Senha padrão ativa: SIM (recomendado trocar)." if config.get("usa_senha_padrao") else "Senha padrão ativa: NÃO."
+    aviso = (
+        "Senha padrão ativa: SIM (recomendado trocar)."
+        if config.get("usa_senha_padrao")
+        else "Senha padrão ativa: NÃO."
+    )
     twofa = "2FA: ATIVO." if config.get("admin_2fa_ativo") else "2FA: INATIVO."
     twofa_req = (
         "2FA obrigatório: SIM."
