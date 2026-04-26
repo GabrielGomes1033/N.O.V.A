@@ -72,11 +72,7 @@ def require_rbac(*allow: str, error_detail: str = "rbac_forbidden"):
     if Request is None:
         return None
 
-    allowed = tuple(
-        str(item or "").strip().lower()
-        for item in allow
-        if str(item or "").strip()
-    )
+    allowed = tuple(str(item or "").strip().lower() for item in allow if str(item or "").strip())
 
     async def _check(request: Request):
         cfg = carregar_config_painel()

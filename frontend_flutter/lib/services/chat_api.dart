@@ -6,6 +6,13 @@ import 'package:http/http.dart' as http;
 
 import 'api_endpoint_config.dart';
 
+typedef ApiHttpExecutor = Future<http.Response> Function(
+  String method,
+  Uri uri, {
+  required Map<String, String> headers,
+  String? encodedBody,
+});
+
 class ApiHttpException implements Exception {
   ApiHttpException({
     required this.method,
@@ -32,20 +39,53 @@ class ApiHttpException implements Exception {
 class ChatApiService {
   ChatApiService({
     String? baseUrl,
-  }) : _endpoint = ApiEndpointConfig.resolve(explicitBaseUrl: baseUrl);
+    String? apiToken,
+    ApiHttpExecutor? httpExecutor,
+  })  : _endpoint = ApiEndpointConfig.resolve(explicitBaseUrl: baseUrl),
+        _apiToken = _normalizeApiToken(apiToken),
+        _httpExecutor = httpExecutor;
 
   static const Duration _requestTimeout = Duration(seconds: 18);
 
   ApiEndpointConfig _endpoint;
+  String _apiToken;
+  final ApiHttpExecutor? _httpExecutor;
 
   String get baseUrl => _endpoint.baseUrl;
   String get baseUrlSource => _endpoint.source;
+  String get apiToken => _apiToken;
 
   void updateBaseUrl(String? baseUrl) {
     _endpoint = ApiEndpointConfig.resolve(explicitBaseUrl: baseUrl);
   }
 
+  void updateApiToken(String? apiToken) {
+    _apiToken = _normalizeApiToken(apiToken);
+  }
+
+  void updateConnection({
+    String? baseUrl,
+    String? apiToken,
+  }) {
+    updateBaseUrl(baseUrl);
+    updateApiToken(apiToken);
+  }
+
   Uri _uriForBase(String baseUrl, String path) => Uri.parse('$baseUrl$path');
+
+  static String _normalizeApiToken(String? raw) {
+    return (raw ?? '').trim();
+  }
+
+  Map<String, String> _buildHeaders() {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+    };
+    if (_apiToken.isNotEmpty) {
+      headers['X-API-Key'] = _apiToken;
+    }
+    return headers;
+  }
 
   Future<http.Response> _performHttp(
     String method,
@@ -53,6 +93,14 @@ class ChatApiService {
     required Map<String, String> headers,
     String? encodedBody,
   }) {
+    if (_httpExecutor != null) {
+      return _httpExecutor!(
+        method,
+        uri,
+        headers: headers,
+        encodedBody: encodedBody,
+      );
+    }
     switch (method) {
       case 'GET':
         return http.get(uri, headers: headers).timeout(_requestTimeout);
@@ -167,7 +215,7 @@ class ChatApiService {
   }) async {
     final normalizedBaseUrl = ApiEndpointConfig.normalizeBaseUrl(baseUrl);
     final encoded = body == null ? null : jsonEncode(body);
-    final headers = {'Content-Type': 'application/json'};
+    final headers = _buildHeaders();
     final attempts = <String>[
       path,
       if (allowPathFallback) ..._fallbackPaths(path),

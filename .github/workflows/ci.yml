@@ -18,23 +18,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend_python/requirements.txt
-      - name: Backend syntax check
+      - name: Backend quality checks
         run: |
-          python -m compileall -q backend_python
-      - name: Backend format check
-        working-directory: backend_python
-        run: |
-          python -m black --check api/app.py api/dependencies.py api/routes_location.py core/logger.py models/schemas.py tests/test_api.py
-      - name: Backend type check
-        working-directory: backend_python
-        run: |
-          python -m mypy
-      - name: Backend tests
-        working-directory: backend_python
-        env:
-          PYTHONPATH: .
-        run: |
-          python -m pytest tests
+          ./scripts/backend_quality.sh
 
   frontend:
     runs-on: ubuntu-latest
@@ -47,7 +33,15 @@ jobs:
         run: |
           cd frontend_flutter
           flutter pub get
+      - name: Flutter format check
+        run: |
+          cd frontend_flutter
+          dart format --output=none --set-exit-if-changed lib test
       - name: Flutter analyze
         run: |
           cd frontend_flutter
           flutter analyze
+      - name: Flutter test
+        run: |
+          cd frontend_flutter
+          flutter test

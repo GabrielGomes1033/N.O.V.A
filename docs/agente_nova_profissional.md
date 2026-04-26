@@ -13,11 +13,17 @@ Este upgrade adiciona:
   - `GET /rag/feedback/stats`
 - Hardening básico:
   - Rate limit por IP e rota
-  - Token opcional para rotas sensíveis via `NOVA_API_TOKEN`
+  - Token obrigatório para rotas protegidas via `NOVA_API_TOKEN` ou `NOVA_API_TOKENS`
 
 ## Segurança por token
 
-Se `NOVA_API_TOKEN` estiver definido no backend, rotas sensíveis exigem:
+Para usar rotas protegidas, configure no backend:
+
+- `NOVA_API_TOKEN=<token>`
+ou
+- `NOVA_API_TOKENS=<token1>,<token2>`
+
+As chamadas autenticadas aceitam:
 
 - `Authorization: Bearer <token>`
 ou
@@ -32,6 +38,11 @@ Rotas sensíveis protegidas:
 - `/rag/index`
 - `/rag/feedback`
 - `/agent/*`
+- `/ops/status`
+- `/system/status`
+- `/documents/analyze`
+
+Sem token valido, essas rotas retornam `401 unauthorized`.
 
 ## Exemplos
 
@@ -39,6 +50,7 @@ Rotas sensíveis protegidas:
 
 ```bash
 curl -X POST https://sua-api.exemplo.com/agent/plan \
+  -H "X-API-Key: seu-token" \
   -H "Content-Type: application/json" \
   -d '{"objective":"planejar meu dia com foco em estudos de API e Flutter"}'
 ```
@@ -47,6 +59,7 @@ curl -X POST https://sua-api.exemplo.com/agent/plan \
 
 ```bash
 curl -X POST https://sua-api.exemplo.com/agent/execute \
+  -H "Authorization: Bearer seu-token" \
   -H "Content-Type: application/json" \
   -d '{"objective":"pesquisar boas práticas de autenticação API e resumir"}'
 ```
@@ -57,6 +70,7 @@ Use `chunk_id` retornado em `result.snippet_items`:
 
 ```bash
 curl -X POST https://sua-api.exemplo.com/rag/feedback \
+  -H "X-API-Key: seu-token" \
   -H "Content-Type: application/json" \
   -d '{"query":"como proteger API", "chunk_id":"abc123", "score":1}'
 ```

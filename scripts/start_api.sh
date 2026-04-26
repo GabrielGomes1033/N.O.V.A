@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env.nova"
 HOST=""
-PORT=""
+PORT_CLI=""
+PORT="${PORT:-}"
 PYTHON_BIN=""
 
 show_help() {
@@ -31,7 +32,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --port)
-      PORT="$2"
+      PORT_CLI="$2"
       shift 2
       ;;
     --python)
@@ -63,8 +64,11 @@ fi
 if [[ -z "${HOST}" ]]; then
   HOST="${NOVA_API_HOST:-0.0.0.0}"
 fi
+if [[ -n "${PORT_CLI}" ]]; then
+  PORT="${PORT_CLI}"
+fi
 if [[ -z "${PORT}" ]]; then
-  PORT="${NOVA_API_PORT:-8000}"
+  PORT="$(default_api_port)"
 fi
 
 if [[ -z "${PYTHON_BIN}" ]]; then

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from core.api_config import build_local_base_url
 
 NOVA_API_VERSION = "2.1.0"
 
@@ -46,8 +47,8 @@ def build_api_health(*, entrypoint: str) -> dict[str, Any]:
             "ios": "partial",
         },
         "client_hints": {
-            "android_emulator_base_url": "http://10.0.2.2:8000",
-            "desktop_base_url": "http://127.0.0.1:8000",
+            "android_emulator_base_url": build_local_base_url("10.0.2.2"),
+            "desktop_base_url": build_local_base_url("127.0.0.1"),
             "android_device_requires_manual_ip": True,
         },
         "endpoints": [

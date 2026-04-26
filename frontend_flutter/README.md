@@ -8,7 +8,7 @@ O app tenta descobrir o backend nesta ordem:
 
 1. URL salva localmente nas configuracoes do app (`Conexao com API`)
 2. `--dart-define=NOVA_API_URL=...`
-3. Auto-detect por plataforma
+3. Auto-detect por plataforma usando `--dart-define=NOVA_API_PORT=...` quando informado
 4. Fallback automatico entre candidatos locais compativeis, quando nao existe URL manual definida
 
 Defaults atuais:
@@ -31,12 +31,25 @@ scripts/start_api.sh
 
 Por padrao a API sobe em `http://0.0.0.0:8000`.
 
+Se quiser trocar a porta padrao do stack local:
+
+```bash
+export NOVA_API_PORT=8119
+scripts/start_api.sh
+```
+
 ## Rodar o Flutter
 
 ```bash
 cd frontend_flutter
 flutter pub get
 flutter run --dart-define=NOVA_API_URL=http://192.168.0.25:8000
+```
+
+Se voce estiver usando uma porta local diferente da padrao e quiser manter o auto-detect:
+
+```bash
+flutter run --dart-define=NOVA_API_PORT=8119
 ```
 
 Tambem e possivel abrir o app e definir a URL manualmente em `Configuracoes > Conexao com API`.

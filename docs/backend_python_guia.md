@@ -285,7 +285,7 @@ Dependencias como `Cython`, `docutils`, `Pillow`, `Pygments` podem ser legado ou
 ## 14) Como rodar backend local
 
 ```bash
-cd /home/dev-0/Documentos/ChatBot/backend_python
+cd /home/dev-0/Documentos/N.O.V.A/backend_python
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -297,13 +297,25 @@ python main.py
 Para conectar o Flutter no celular com o backend real:
 
 ```bash
-cd /home/dev-0/Documentos/ChatBot/backend_python
-python api_server.py --host 0.0.0.0 --port 8000
+cd /home/dev-0/Documentos/N.O.V.A
+scripts/start_api.sh
 ```
 
 Endpoints:
 - `GET /health`
 - `POST /chat` com body JSON `{"message":"..."}`.
+
+Se quiser trocar a porta local sem editar codigo:
+
+```bash
+export NOVA_API_PORT=8119
+scripts/start_api.sh
+```
+
+Rotas protegidas por token:
+- Defina `NOVA_API_TOKEN` ou `NOVA_API_TOKENS` no backend para conseguir autenticar chamadas protegidas.
+- Os headers aceitos sao `Authorization: Bearer <token>` e `X-API-Key: <token>`.
+- Exemplos de rotas protegidas: `GET /ops/status`, `GET /system/status` e `POST /documents/analyze`.
 
 ## 15) Linha por linha: pontos mais criticos para aprender
 

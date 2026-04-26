@@ -108,7 +108,7 @@ Quando o estado muda (`setState`), o Flutter reconstrói os widgets necessarios.
 No terminal:
 
 ```bash
-cd /home/dev-0/Documentos/ChatBot/frontend_flutter
+cd /home/dev-0/Documentos/N.O.V.A/frontend_flutter
 flutter pub get
 flutter run --dart-define=NOVA_API_URL=http://SEU_IP_LOCAL:8000
 ```
@@ -122,6 +122,7 @@ flutter run --dart-define=NOVA_API_URL=http://192.168.0.25:8000
 Importante:
 - `SEU_IP_LOCAL` deve ser o IP do computador onde a API Python está rodando.
 - Celular e computador precisam estar na mesma rede.
+- Se a API local estiver em outra porta, voce pode informar so a porta do auto-detect com `--dart-define=NOVA_API_PORT=8119` ou passar a URL completa com a porta correta.
 
 ## 6) Gerar base nativa completa (android/ios/web)
 
@@ -129,7 +130,7 @@ No momento, o ambiente atual nao tem Flutter CLI instalado (`flutter: command no
 Assim que instalar Flutter localmente, rode:
 
 ```bash
-cd /home/dev-0/Documentos/ChatBot/frontend_flutter
+cd /home/dev-0/Documentos/N.O.V.A/frontend_flutter
 flutter create .
 ```
 

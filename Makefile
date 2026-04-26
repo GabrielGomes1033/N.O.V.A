@@ -1,9 +1,10 @@
-.PHONY: help quick quick-tests full apk
+.PHONY: help quick quick-tests quality full apk
 
 help:
 	@echo "Comandos disponíveis:"
-	@echo "  make quick        -> checagem rápida (backend compile + flutter analyze)"
+	@echo "  make quick        -> checagem rápida (backend compile + dart format + flutter analyze)"
 	@echo "  make quick-tests  -> quick + flutter test"
+	@echo "  make quality      -> backend quality (compile + black + mypy + pytest)"
 	@echo "  make full         -> validação completa de integração"
 	@echo "  make apk API_URL=https://sua-api -> build + install APK"
 
@@ -12,6 +13,9 @@ quick:
 
 quick-tests:
 	@./scripts/quick_check.sh --tests
+
+quality:
+	@./scripts/backend_quality.sh
 
 full:
 	@./scripts/integration_check.sh

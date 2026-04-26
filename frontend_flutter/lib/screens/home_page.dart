@@ -68,6 +68,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'telegram_ativo': false,
     'telegram_token': '',
     'telegram_chat_id': '',
+    'api_token': '',
     'api_base_url': '',
     'calendar_email': 'gabrielgomes151211@gmail.com',
     'autonomia_ativa': true,
@@ -104,8 +105,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool get _pushToTalkOnly => _config['push_to_talk_only'] != false;
   bool get _effectiveContinuousWake => !_pushToTalkOnly && _continuousWakeMode;
 
-  void _syncApiBaseUrlFromConfig() {
-    _api.updateBaseUrl(_config['api_base_url']?.toString());
+  void _syncApiConnectionSettingsFromConfig() {
+    _api.updateConnection(
+      baseUrl: _config['api_base_url']?.toString(),
+      apiToken: _config['api_token']?.toString(),
+    );
   }
 
   String _buildBackendStatusLine(Map<String, dynamic> health) {
@@ -362,7 +366,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           }
         }
       });
-      _syncApiBaseUrlFromConfig();
+      _syncApiConnectionSettingsFromConfig();
       if (!_listenModeEnabled) {
         _manualListeningStop = true;
         await _speech.stop();
@@ -380,11 +384,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _secureSecrets.saveConfigSecrets(
       telegramToken: _config['telegram_token']?.toString() ?? '',
       telegramChatId: _config['telegram_chat_id']?.toString() ?? '',
+      apiToken: _config['api_token']?.toString() ?? '',
     );
 
     final sanitizedConfig = Map<String, dynamic>.from(_config)
       ..remove('telegram_token')
-      ..remove('telegram_chat_id');
+      ..remove('telegram_chat_id')
+      ..remove('api_token');
 
     await _localDb.saveAdminState(
       knowledge: _knowledge,
@@ -426,7 +432,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           }
           _systemStatus = 'Painel sincronizado com backend.';
         });
-        _syncApiBaseUrlFromConfig();
+        _syncApiConnectionSettingsFromConfig();
         await _saveLocalState();
       }
     } catch (_) {
@@ -3231,6 +3237,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final telegramChatController = TextEditingController(
       text: _config['telegram_chat_id']?.toString() ?? '',
     );
+    final apiTokenController = TextEditingController(
+      text: _config['api_token']?.toString() ?? '',
+    );
     final apiBaseUrlController = TextEditingController(
       text: _config['api_base_url']?.toString() ?? '',
     );
@@ -3261,12 +3270,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ApiEndpointConfig.normalizeBaseUrl(rawApiBaseUrl);
               if (rawApiBaseUrl.isNotEmpty && normalizedApiBaseUrl.isEmpty) {
                 _showSnack(
-                  'URL da API invalida. Use algo como http://192.168.0.25:8000',
+                  'URL da API invalida. Use algo como ${ApiEndpointConfig.exampleManualBaseUrl()}',
                 );
                 return;
               }
 
               final wakeContinuoEfetivo = pushToTalkOnly ? false : wakeContinuo;
+              final apiToken = apiTokenController.text.trim();
               final novoBackend = {
                 'voz_ativa': vozAtiva,
                 'voice_neural_hybrid': vozNeuralHybrid,
@@ -3286,12 +3296,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               };
               final novoLocal = {
                 ...novoBackend,
+                'api_token': apiToken,
                 'api_base_url': normalizedApiBaseUrl,
                 'calendar_email': calendarEmailController.text.trim(),
               };
               final resolvedApiBaseUrl = ApiEndpointConfig.resolve(
                 explicitBaseUrl: normalizedApiBaseUrl,
               ).baseUrl;
+              _api.updateConnection(
+                baseUrl: normalizedApiBaseUrl,
+                apiToken: apiToken,
+              );
 
               try {
                 final atualizado = await _api.updateConfig(novoBackend);
@@ -3304,7 +3319,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   }
                   _systemStatus = 'API pronta em $resolvedApiBaseUrl.';
                 });
-                _syncApiBaseUrlFromConfig();
+                _syncApiConnectionSettingsFromConfig();
                 if (!escutaAtiva) {
                   _manualListeningStop = true;
                   await _speech.stop();
@@ -3335,7 +3350,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   _systemStatus =
                       'Config local salva para $resolvedApiBaseUrl.';
                 });
-                _syncApiBaseUrlFromConfig();
+                _syncApiConnectionSettingsFromConfig();
                 await _saveLocalState();
                 if (!context.mounted) return;
                 Navigator.of(context).pop();
@@ -3494,12 +3509,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           const SizedBox(height: 6),
                           NovaInput(
                             controller: apiBaseUrlController,
-                            hintText: 'http://192.168.0.25:8000',
+                            hintText: ApiEndpointConfig.exampleManualBaseUrl(),
+                          ),
+                          const SizedBox(height: 8),
+                          NovaInput(
+                            controller: apiTokenController,
+                            hintText: 'Token da API (X-API-Key/Bearer)',
+                            obscureText: true,
                           ),
                           const SizedBox(height: 8),
                           const Text(
                             'Opcional. Deixe vazio para usar o auto-detect da plataforma. '
-                            'Preencha para apontar o app para um backend especifico sem recompilar.',
+                            'Preencha para apontar o app para um backend especifico sem recompilar. '
+                            'Se o backend exigir autenticacao, informe aqui o token da API.',
                             style: TextStyle(
                                 color: Color(0xFF6689A2), fontSize: 12),
                           ),
@@ -3822,7 +3844,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     wakeWordController.dispose();
     telegramTokenController.dispose();
     telegramChatController.dispose();
+    apiTokenController.dispose();
     apiBaseUrlController.dispose();
+    calendarEmailController.dispose();
   }
 
   void _showSnack(String message) {

@@ -8,9 +8,10 @@ void main() {
   });
 
   test('normaliza URL digitada pelo usuario', () {
+    final expectedLocal = 'http://192.168.0.25:${ApiEndpointConfig.apiPort}';
     expect(
-      ApiEndpointConfig.normalizeBaseUrl('192.168.0.25:8000/'),
-      'http://192.168.0.25:8000',
+      ApiEndpointConfig.normalizeBaseUrl('$expectedLocal/'),
+      expectedLocal,
     );
     expect(
       ApiEndpointConfig.normalizeBaseUrl(' https://nova.local/api/ '),
@@ -32,7 +33,7 @@ void main() {
 
     final config = ApiEndpointConfig.resolve();
 
-    expect(config.baseUrl, 'http://10.0.2.2:8000');
+    expect(config.baseUrl, 'http://10.0.2.2:${ApiEndpointConfig.apiPort}');
     expect(config.source, 'android_emulador');
   });
 
@@ -41,10 +42,11 @@ void main() {
 
     final candidates = ApiEndpointConfig.candidates();
 
-    expect(candidates.first.baseUrl, 'http://127.0.0.1:8000');
+    expect(candidates.first.baseUrl,
+        'http://127.0.0.1:${ApiEndpointConfig.apiPort}');
     expect(
       candidates.map((item) => item.baseUrl),
-      contains('http://localhost:8000'),
+      contains('http://localhost:${ApiEndpointConfig.apiPort}'),
     );
   });
 
@@ -53,7 +55,7 @@ void main() {
 
     final config = ApiEndpointConfig.resolve();
 
-    expect(config.baseUrl, 'http://127.0.0.1:8000');
+    expect(config.baseUrl, 'http://127.0.0.1:${ApiEndpointConfig.apiPort}');
     expect(config.source, 'localhost');
   });
 }

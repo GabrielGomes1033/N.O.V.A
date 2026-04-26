@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class SecureSecretsService {
   static const _kTelegramToken = 'nova.telegram.token';
   static const _kTelegramChatId = 'nova.telegram.chat_id';
+  static const _kApiToken = 'nova.api.token';
   static const _kAdminPinHash = 'nova.admin.pin_hash';
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
@@ -15,18 +16,22 @@ class SecureSecretsService {
   Future<Map<String, String>> readConfigSecrets() async {
     final token = await _storage.read(key: _kTelegramToken) ?? '';
     final chatId = await _storage.read(key: _kTelegramChatId) ?? '';
+    final apiToken = await _storage.read(key: _kApiToken) ?? '';
     return {
       'telegram_token': token,
       'telegram_chat_id': chatId,
+      'api_token': apiToken,
     };
   }
 
   Future<void> saveConfigSecrets({
     required String telegramToken,
     required String telegramChatId,
+    required String apiToken,
   }) async {
     await _storage.write(key: _kTelegramToken, value: telegramToken.trim());
     await _storage.write(key: _kTelegramChatId, value: telegramChatId.trim());
+    await _storage.write(key: _kApiToken, value: apiToken.trim());
   }
 
   Future<bool> hasAdminPin() async {

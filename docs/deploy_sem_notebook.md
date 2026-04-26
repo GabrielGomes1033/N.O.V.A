@@ -24,6 +24,7 @@ git push
 5. Adicione variáveis de ambiente (Environment):
    - `NOVA_ADMIN_USER`
    - `NOVA_ADMIN_PASSWORD`
+   - `NOVA_API_TOKEN` ou `NOVA_API_TOKENS` para liberar rotas protegidas
 6. Clique em Deploy
 
 Quando subir, você terá uma URL como:
@@ -46,7 +47,7 @@ Esperado:
 ## 4) Rodar app Flutter apontando para nuvem
 
 ```bash
-cd /home/dev-0/Documentos/ChatBot/frontend_flutter
+cd /home/dev-0/Documentos/N.O.V.A/frontend_flutter
 flutter pub get
 flutter run --dart-define=NOVA_API_URL=https://sua-nova-api.onrender.com
 ```
@@ -73,6 +74,9 @@ Variáveis no serviço backend:
 - `NOVA_DRIVE_FOLDER_ID` (opcional): pasta no Drive
 - `NOVA_DRIVE_FILE_NAME` (opcional): nome do arquivo de backup
 
+Se voce usa rotas protegidas da API, mantenha tambem:
+- `NOVA_API_TOKEN` ou `NOVA_API_TOKENS`
+
 Comandos após login admin:
 
 ```text
@@ -87,7 +91,7 @@ Você também pode publicar no Cloud Run:
 
 ```bash
 gcloud run deploy nova-api \
-  --source /home/dev-0/Documentos/ChatBot/backend_python \
+  --source /home/dev-0/Documentos/N.O.V.A/backend_python \
   --region us-central1 \
   --allow-unauthenticated \
   --set-env-vars NOVA_ADMIN_USER=admin,NOVA_ADMIN_PASSWORD=senha_forte
@@ -103,3 +107,19 @@ Depois use a URL HTTPS gerada no Flutter `--dart-define=NOVA_API_URL=...`.
   - `/admin configurar <usuario> <senha_forte>`
 - Se quiser persistência forte de dados, use volume/disco persistente no provedor.
 - Faça sincronização periódica do backup no Drive.
+
+## 9) Ambiente local com Docker rootless
+
+Para subir a API local em container:
+
+```bash
+source ~/.bashrc
+cd /home/dev-0/Documentos/N.O.V.A
+docker compose up -d
+docker compose ps
+curl "http://127.0.0.1:${NOVA_API_PORT:-8000}/health"
+```
+
+Observações:
+- O projeto foi validado com Docker rootless.
+- O serviço de usuário do Docker pode permanecer disponível após reboot com `loginctl enable-linger dev-0`.

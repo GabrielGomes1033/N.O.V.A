@@ -275,24 +275,28 @@ class NovaInput extends StatelessWidget {
     required this.controller,
     required this.hintText,
     this.maxLines = 1,
+    this.obscureText = false,
   });
 
   final TextEditingController controller;
   final String hintText;
   final int maxLines;
+  final bool obscureText;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      obscureText: obscureText,
       style: const TextStyle(color: Color(0xFFCBEFFF)),
       decoration: InputDecoration(
         hintText: hintText,
         hintStyle: const TextStyle(color: Color(0xFF537B95)),
         filled: true,
         fillColor: const Color(0x78031829),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: Color(0xFF084D76)),

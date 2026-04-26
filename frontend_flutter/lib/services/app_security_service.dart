@@ -16,7 +16,8 @@ class AppSecurityService {
   Future<bool> authenticateAdmin() async {
     try {
       return await _auth.authenticate(
-        localizedReason: 'Confirme sua identidade para acessar o painel administrativo da NOVA.',
+        localizedReason:
+            'Confirme sua identidade para acessar o painel administrativo da NOVA.',
         options: const AuthenticationOptions(
           biometricOnly: false,
           stickyAuth: true,

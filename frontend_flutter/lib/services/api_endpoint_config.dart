@@ -11,6 +11,22 @@ class ApiEndpointConfig {
   final String baseUrl;
   final String source;
 
+  static const int apiPort = int.fromEnvironment(
+    'NOVA_API_PORT',
+    defaultValue: 8000,
+  );
+
+  static String localBaseUrl(
+    String host, {
+    String scheme = 'http',
+  }) {
+    return '$scheme://$host:$apiPort';
+  }
+
+  static String exampleManualBaseUrl([String host = '192.168.0.25']) {
+    return localBaseUrl(host);
+  }
+
   static List<ApiEndpointConfig> candidates({String? explicitBaseUrl}) {
     final out = <ApiEndpointConfig>[];
 
@@ -54,7 +70,7 @@ class ApiEndpointConfig {
       }
 
       if (isLocal && host.isNotEmpty) {
-        push('$scheme://$host:8000', 'web_mesmo_host');
+        push(localBaseUrl(host, scheme: scheme), 'web_mesmo_host');
         push(Uri.base.origin, 'web_mesma_origem');
         return out;
       }
@@ -66,17 +82,20 @@ class ApiEndpointConfig {
     }
 
     if (PlatformCapabilities.isAndroid) {
-      push('http://10.0.2.2:8000', 'android_emulador');
-      push('http://127.0.0.1:8000', 'android_loopback');
-      push('http://localhost:8000', 'android_localhost');
+      push(localBaseUrl('10.0.2.2'), 'android_emulador');
+
+      // Para celular físico, rode o app com:
+      // flutter run --dart-define=NOVA_API_PORT=8000 --dart-define=NOVA_API_URL=http://SEU_IP_LOCAL:8000
+      push(localBaseUrl('127.0.0.1'), 'android_loopback');
+      push(localBaseUrl('localhost'), 'android_localhost');
       return out;
     }
 
     push(
-      'http://127.0.0.1:8000',
+      localBaseUrl('127.0.0.1'),
       PlatformCapabilities.isIOS ? 'ios_simulador_ou_local' : 'localhost',
     );
-    push('http://localhost:8000', 'localhost_alias');
+    push(localBaseUrl('localhost'), 'localhost_alias');
     return out;
   }
 
@@ -100,9 +119,8 @@ class ApiEndpointConfig {
         : (uri.path.endsWith('/') && uri.path.length > 1
             ? uri.path.substring(0, uri.path.length - 1)
             : uri.path);
-    final normalized = uri.replace(
-      path: normalizedPath,
-    );
+
+    final normalized = uri.replace(path: normalizedPath);
 
     final asText = normalized.toString();
     return asText.endsWith('/')
