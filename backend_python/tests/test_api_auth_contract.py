@@ -94,6 +94,18 @@ class ApiAuthContractTests(unittest.TestCase):
         self.assertEqual(authorized.status_code, 200)
         self.assertTrue(authorized.json()["ok"])
 
+    def test_documents_inspect_stays_open_without_token(self) -> None:
+        payload = {
+            "filename": "contrato.txt",
+            "content_base64": "VGVzdGUgZGUgY29udHJhdG8gZGUgYXV0ZW50aWNhY2FvLg==",
+        }
+
+        with self._build_client("contrato-token"), TestClient(create_app()) as client:
+            response = client.post("/documents/inspect", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

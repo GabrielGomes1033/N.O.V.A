@@ -173,6 +173,8 @@ from core.orchestrator import get_default_orchestrator
 from core.memoria_assuntos import aprender_assuntos, perfil_assuntos, dica_contextual_para_pergunta
 from core.help_center import ajuda_texto_humano, ajuda_topicos
 from core.logger import logger
+from core.mercado import responder_consulta_mercado
+from core.noticias import responder_consulta_noticias
 from routes.chat_routes import handle_chat_post
 from routes.knowledge_routes import (
     handle_knowledge_delete,
@@ -1107,19 +1109,13 @@ def processar_mensagem(user):
     if consulta_mapa:
         return ret(_responder_busca_mapa(consulta_mapa, modo="busca"), evento="maps_search")
 
-    if any(
-        k in user_l
-        for k in [
-            "cotacao",
-            "cotação",
-            "dolar",
-            "euro",
-            "bitcoin",
-            "ethereum",
-            "mercado financeiro",
-        ]
-    ):
-        return ret(formatar_cotacoes_humanas(cotacoes_financeiras()), evento="market")
+    noticias = responder_consulta_noticias(user)
+    if noticias:
+        return ret(noticias, evento="search")
+
+    mercado = responder_consulta_mercado(user)
+    if mercado:
+        return ret(mercado, evento="market")
 
     if any(k in user_l for k in ["clima", "tempo agora", "temperatura"]):
         cidade = ""
@@ -1363,7 +1359,10 @@ class NovaHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-API-Key, X-User-Role, X-User-Name",
+        )
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -1373,7 +1372,10 @@ class NovaHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-API-Key, X-User-Role, X-User-Name",
+        )
         self.end_headers()
 
     def _rate_limit_ok(self, route: str) -> bool:
@@ -1396,6 +1398,7 @@ class NovaHandler(BaseHTTPRequestHandler):
     def _token_required_for(self, path: str) -> bool:
         if not token_api_configurado():
             return False
+        is_document_inspect = path.startswith("/documents/inspect")
         protegidas = (
             path.startswith("/admin")
             or path.startswith("/security")
@@ -1404,7 +1407,7 @@ class NovaHandler(BaseHTTPRequestHandler):
             or path.startswith("/autonomy")
             or path.startswith("/ops")
             or path.startswith("/approvals")
-            or path.startswith("/documents")
+            or (path.startswith("/documents") and not is_document_inspect)
             or path.startswith("/rag/index")
             or path.startswith("/rag/feedback")
             or path.startswith("/agent/")
@@ -1955,8 +1958,15 @@ class NovaHandler(BaseHTTPRequestHandler):
         if path == "/documents/analyze":
             filename = str(body.get("filename", "")).strip()
             content_b64 = str(body.get("content_base64", "")).strip()
-            auto_learn = True
+            auto_learn = bool(body.get("auto_learn", True))
             out = analisar_documento_base64(filename, content_b64, auto_learn=auto_learn)
+            status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(out, status=status)
+            return
+        if path == "/documents/inspect":
+            filename = str(body.get("filename", "")).strip()
+            content_b64 = str(body.get("content_base64", "")).strip()
+            out = analisar_documento_base64(filename, content_b64, auto_learn=False)
             status = HTTPStatus.OK if out.get("ok") else HTTPStatus.BAD_REQUEST
             self._send_json(out, status=status)
             return

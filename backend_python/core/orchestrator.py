@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from core.assistente_plus import adicionar_lembrete
+from core.assistente_plus import adicionar_lembrete, formatar_resposta_pesquisa
 from core.google_calendar import create_google_calendar_event, parse_calendar_event_request
 from core.intent_classifier import IntentDecision, classify_intent
 from core.respostas import detectar_intencao as detect_response_intent, responder
@@ -336,14 +336,8 @@ class RuleBasedLLM:
                     "Nao consegui pesquisar agora. Posso tentar novamente com um recorte mais especifico.",
                     modo=mode,
                 )
-            resumo = str(result.get("summary", "")).strip()
-            if not resumo:
-                resumo = "Encontrei resultados, mas sem um resumo confiavel ainda."
-            fontes = result.get("sources") or []
-            bloco_fontes = ""
-            if fontes:
-                bloco_fontes = "\nFontes: " + ", ".join(str(item) for item in fontes[:3])
-            return style_response(f"Pesquisei e encontrei isto: {resumo}{bloco_fontes}", modo=mode)
+            resposta = formatar_resposta_pesquisa(result, max_fontes=4, max_links=3)
+            return style_response(resposta, modo=mode)
 
         if tool_name == "save_memory":
             if ok:
@@ -761,7 +755,7 @@ class NovaOrchestrator:
             }
 
         translatable_reply = re.sub(
-            r"^\s*Pesquisei e encontrei isto:\s*",
+            r"^\s*Pesquisei(?:\s+sobre[^\n:]*)?\s+e\s+organizei[^\n:]*:\s*",
             "",
             str(last_search.get("reply", "")),
             flags=re.IGNORECASE,

@@ -14,7 +14,9 @@ import xml.etree.ElementTree as ET
 import requests
 
 from core.caminhos import pasta_dados_app
+from core.formatador import formatar_cotacoes_basicas
 from core.memoria import carregar_memoria_usuario, salvar_memoria_usuario
+from core.mercado import cotacoes_financeiras as _cotacoes_financeiras_base
 from core.pesquisa import gerar_pesquisa_wikipedia
 from core.seguranca import carregar_json_seguro, salvar_json_seguro
 
@@ -266,10 +268,11 @@ def _pontuar_resultado_web(item: dict, termos: set[str], consulta: str = "") -> 
     titulo = _limpar(str(item.get("title", ""))).lower()
     snippet = _limpar(str(item.get("snippet", ""))).lower()
     domain = _limpar(str(item.get("domain", ""))).lower()
+    url = _limpar(str(item.get("url", ""))).lower()
     if not titulo and not snippet:
         return -1
 
-    texto = f"{titulo} {snippet} {domain}".strip()
+    texto = f"{titulo} {snippet} {domain} {url}".strip()
     if not texto:
         return -1
 
@@ -278,6 +281,7 @@ def _pontuar_resultado_web(item: dict, termos: set[str], consulta: str = "") -> 
     titulo_n = _normalizar_ascii(titulo)
     snippet_n = _normalizar_ascii(snippet)
     domain_n = _normalizar_ascii(domain)
+    url_n = _normalizar_ascii(url)
     consulta_n = _normalizar_ascii(_limpar(consulta))
     categoria = _classificar_consulta_web(consulta)
     termos_n = {_normalizar_ascii(t) for t in termos}
@@ -327,6 +331,39 @@ def _pontuar_resultado_web(item: dict, termos: set[str], consulta: str = "") -> 
     elif tam_snippet > 320:
         score -= 1
 
+    consulta_carreira = any(
+        hint in consulta_n
+        for hint in (
+            "vaga",
+            "vagas",
+            "emprego",
+            "empregos",
+            "carreira",
+            "carreiras",
+            "salario",
+            "salarios",
+            "job",
+            "jobs",
+            "hiring",
+        )
+    )
+    if not consulta_carreira and any(
+        hint in f"{domain_n} {url_n} {titulo_n}"
+        for hint in (
+            "jobs.",
+            "job.",
+            "lever.co",
+            "greenhouse.io",
+            "workday",
+            "ashbyhq.com",
+            "careers",
+            "/jobs",
+            "/careers",
+            "we re hiring",
+        )
+    ):
+        score -= 8
+
     if categoria == "technical":
         if any(
             hint in domain_n
@@ -346,6 +383,8 @@ def _pontuar_resultado_web(item: dict, termos: set[str], consulta: str = "") -> 
     elif categoria == "factual":
         if "wikipedia.org" in domain_n:
             score += 3
+        if "britannica.com" in domain_n:
+            score += 2
         if domain_n.endswith(".gov") or domain_n.endswith(".edu"):
             score += 2
     elif categoria == "recency":
@@ -366,6 +405,13 @@ def _pontuar_resultado_web(item: dict, termos: set[str], consulta: str = "") -> 
         if "wikipedia.org" in domain_n or any(
             hint in domain_n for hint in ("docs.", "developer.", "github.com", "stackoverflow.com")
         ):
+            score += 2
+    elif categoria == "general":
+        if "wikipedia.org" in domain_n:
+            score += 4
+        elif "britannica.com" in domain_n:
+            score += 3
+        elif domain_n.endswith(".edu") or domain_n.endswith(".gov"):
             score += 2
 
     return score
@@ -933,6 +979,7 @@ def pesquisar_na_internet(consulta: str) -> dict:
         return {"ok": False, "resumo": "Consulta vazia.", "fontes": [], "links": []}
 
     consulta_base = _consulta_base(consulta)
+    categoria_consulta = _classificar_consulta_web(consulta_base)
     tk = _tokens(consulta_base)
     termos_consulta = _termos_relevantes_consulta(consulta_base)
     secoes: list[str] = []
@@ -1038,7 +1085,13 @@ def pesquisar_na_internet(consulta: str) -> dict:
                 termos_consulta,
             )
             if trecho and (score_wiki > 0 or not termos_consulta):
-                if not resumo_rapido:
+                wiki_pt = str(wiki.get("fonte", "")).strip().lower() == "wikipedia pt"
+                preferir_wiki_pt = wiki_pt and categoria_consulta in {
+                    "general",
+                    "factual",
+                    "comparison",
+                }
+                if preferir_wiki_pt or not resumo_rapido:
                     resumo_rapido = trecho
                 elif len(destaques_web) < 4:
                     destaques_web.append(f"Wikipedia — {trecho}")
@@ -1195,24 +1248,84 @@ def formatar_resposta_pesquisa(resultado: dict, max_fontes: int = 6, max_links: 
     if not isinstance(resultado, dict):
         return "Não consegui organizar a resposta da pesquisa agora."
 
-    resumo = str(resultado.get("resumo", "")).strip()
+    consulta = _limpar(str(resultado.get("consulta") or resultado.get("query") or ""))
+    resumo = str(resultado.get("resumo") or resultado.get("summary") or "").strip()
     if not resumo:
         return "Não consegui encontrar um resumo agora."
 
-    consulta = _limpar(str(resultado.get("consulta", "")))
     if consulta:
-        abertura = f"Pesquisei sobre {consulta} e organizei o que encontrei de forma direta:"
+        abertura = f"Pesquisei sobre {consulta} e organizei a explicação de forma clara:"
     else:
-        abertura = "Pesquisei agora e organizei o que encontrei de forma direta:"
+        abertura = "Pesquisei agora e organizei a explicação de forma clara:"
 
-    partes = [abertura, resumo]
+    resumo_normalizado = resumo
+    if not re.search(
+        r"(?im)^(?:resumo direto|explicacao direta|o que e|o que é|visao geral):",
+        resumo_normalizado,
+    ):
+        resumo_normalizado = "Explicacao direta:\n" + resumo_normalizado
 
-    fontes_raw = resultado.get("fontes", [])
+    partes = [abertura, resumo_normalizado]
+
+    resultados_raw = resultado.get("results")
+    pontos_principais: list[str] = []
+    if isinstance(resultados_raw, list) and not re.search(
+        r"(?im)^pontos principais:",
+        resumo_normalizado,
+    ):
+        for item in resultados_raw[:4]:
+            if not isinstance(item, dict):
+                continue
+            titulo = _resumir_texto(str(item.get("title", "")), limite=90)
+            snippet = _resumir_texto(str(item.get("snippet", "")), limite=140)
+            dominio = _limpar(str(item.get("domain", "")))
+            if not dominio:
+                dominio = _limpar(urlparse(str(item.get("url", ""))).netloc.replace("www.", ""))
+            if titulo and snippet:
+                linha = f"{titulo} — {snippet}"
+            elif snippet:
+                linha = snippet
+            else:
+                linha = titulo
+            linha = _limpar(linha)
+            if not linha:
+                continue
+            if dominio:
+                linha = f"{linha} ({dominio})"
+            if linha not in pontos_principais:
+                pontos_principais.append(linha)
+    if pontos_principais:
+        partes.append(
+            "Pontos principais:\n"
+            + "\n".join(f"{idx}. {linha}" for idx, linha in enumerate(pontos_principais, start=1))
+        )
+
+    fontes_raw = list(resultado.get("fontes") or resultado.get("sources") or [])
+    if isinstance(resultados_raw, list):
+        for item in resultados_raw:
+            if not isinstance(item, dict):
+                continue
+            dominio = _limpar(str(item.get("domain", "")))
+            if not dominio:
+                dominio = _limpar(urlparse(str(item.get("url", ""))).netloc.replace("www.", ""))
+            if dominio:
+                fontes_raw.append(dominio)
     fontes = _dedupe_ordem([str(x) for x in fontes_raw if str(x).strip()])[: max(1, max_fontes)]
     if fontes:
         partes.append("Fontes consultadas:\n" + "\n".join(f"- {f}" for f in fontes))
 
-    links_raw = resultado.get("links", [])
+    links_raw = list(resultado.get("links") or [])
+    if isinstance(resultados_raw, list):
+        for item in resultados_raw:
+            if not isinstance(item, dict):
+                continue
+            url = _limpar(str(item.get("url", "")))
+            if url:
+                links_raw.append(url)
+    for item in resultado.get("sources") or []:
+        valor = _limpar(str(item))
+        if valor.startswith("http://") or valor.startswith("https://"):
+            links_raw.append(valor)
     links = _dedupe_ordem([str(x) for x in links_raw if str(x).strip()])[: max(1, max_links)]
     if links:
         partes.append(
@@ -1226,84 +1339,11 @@ def formatar_resposta_pesquisa(resultado: dict, max_fontes: int = 6, max_links: 
 
 
 def cotacoes_financeiras() -> dict:
-    resultado = {
-        "ok": True,
-        "dolar_brl": None,
-        "euro_brl": None,
-        "bitcoin_usd": None,
-        "ethereum_usd": None,
-        "updated_at": _agora(),
-        "source": [],
-    }
-
-    try:
-        fx = requests.get(
-            "https://api.frankfurter.app/latest?from=USD&to=BRL", timeout=TIMEOUT_PADRAO
-        )
-        fx.raise_for_status()
-        d = fx.json()
-        resultado["dolar_brl"] = float(d.get("rates", {}).get("BRL"))
-        resultado["source"].append("Frankfurter")
-    except Exception:
-        pass
-
-    try:
-        fx = requests.get(
-            "https://api.frankfurter.app/latest?from=EUR&to=BRL", timeout=TIMEOUT_PADRAO
-        )
-        fx.raise_for_status()
-        d = fx.json()
-        resultado["euro_brl"] = float(d.get("rates", {}).get("BRL"))
-        if "Frankfurter" not in resultado["source"]:
-            resultado["source"].append("Frankfurter")
-    except Exception:
-        pass
-
-    try:
-        cg = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
-            timeout=TIMEOUT_PADRAO,
-        )
-        cg.raise_for_status()
-        d = cg.json()
-        resultado["bitcoin_usd"] = float(d.get("bitcoin", {}).get("usd"))
-        resultado["ethereum_usd"] = float(d.get("ethereum", {}).get("usd"))
-        resultado["source"].append("CoinGecko")
-    except Exception:
-        pass
-
-    if not any(
-        [
-            resultado["dolar_brl"],
-            resultado["euro_brl"],
-            resultado["bitcoin_usd"],
-            resultado["ethereum_usd"],
-        ]
-    ):
-        return {"ok": False, "error": "sem_dados"}
-
-    return resultado
+    return _cotacoes_financeiras_base()
 
 
 def formatar_cotacoes_humanas(c: dict) -> str:
-    if c.get("ok") is not True:
-        return "Não consegui atualizar cotações agora."
-
-    partes = []
-    if c.get("dolar_brl") is not None:
-        partes.append(f"Dólar: R$ {c['dolar_brl']:.4f}")
-    if c.get("euro_brl") is not None:
-        partes.append(f"Euro: R$ {c['euro_brl']:.4f}")
-    if c.get("bitcoin_usd") is not None:
-        partes.append(f"Bitcoin: US$ {c['bitcoin_usd']:.2f}")
-    if c.get("ethereum_usd") is not None:
-        partes.append(f"Ethereum: US$ {c['ethereum_usd']:.2f}")
-
-    base = " | ".join(partes) if partes else "Sem cotações disponíveis."
-    fontes = c.get("source", [])
-    if fontes:
-        base += "\nFontes: " + ", ".join(fontes)
-    return base
+    return formatar_cotacoes_basicas(c)
 
 
 def consultar_clima(cidade: str | None = None) -> str:

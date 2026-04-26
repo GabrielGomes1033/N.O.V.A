@@ -75,6 +75,27 @@ class SearchModeTests(unittest.TestCase):
 
         self.assertEqual(ordenados[0]["domain"], "fastapi.tiangolo.com")
 
+    def test_prioriza_fonte_referencial_em_consulta_conceitual(self) -> None:
+        ordenados = _organizar_resultados_web(
+            [
+                {
+                    "title": "Senior Staff Machine Learning Engineer",
+                    "snippet": "We are hiring an engineer to build machine learning systems.",
+                    "domain": "jobs.lever.co",
+                    "url": "https://jobs.lever.co/exemplo/123",
+                },
+                {
+                    "title": "Machine learning - Wikipedia",
+                    "snippet": "Machine learning is a field of study in artificial intelligence.",
+                    "domain": "wikipedia.org",
+                    "url": "https://en.wikipedia.org/wiki/Machine_learning",
+                },
+            ],
+            "machine learning",
+        )
+
+        self.assertEqual(ordenados[0]["domain"], "wikipedia.org")
+
     def test_nao_aciona_pesquisa_para_conversa_curta(self) -> None:
         self.assertFalse(deve_acionar_pesquisa_web("Oi, tudo bem?"))
 
@@ -89,6 +110,28 @@ class SearchModeTests(unittest.TestCase):
             }
         )
         self.assertIn("Pesquisei sobre Model Context Protocol", texto)
+        self.assertIn("Fontes consultadas", texto)
+        self.assertIn("Se quiser se aprofundar", texto)
+
+    def test_formata_resposta_pesquisa_com_results_structurados(self) -> None:
+        texto = formatar_resposta_pesquisa(
+            {
+                "ok": True,
+                "query": "machine learning",
+                "summary": "Machine learning permite que sistemas aprendam com dados.",
+                "results": [
+                    {
+                        "title": "Machine learning",
+                        "snippet": "É uma área da IA focada em aprender padrões a partir de dados.",
+                        "url": "https://pt.wikipedia.org/wiki/Aprendizado_de_maquina",
+                    }
+                ],
+                "sources": ["https://pt.wikipedia.org/wiki/Aprendizado_de_maquina"],
+            }
+        )
+
+        self.assertIn("Explicacao direta", texto)
+        self.assertIn("Pontos principais", texto)
         self.assertIn("Fontes consultadas", texto)
         self.assertIn("Se quiser se aprofundar", texto)
 
@@ -116,6 +159,24 @@ class SearchModeTests(unittest.TestCase):
             resposta = orquestrar_consulta("clima em Recife")
 
         self.assertEqual(resposta, {"resposta": "Tempo estável em Recife."})
+
+    def test_orquestrador_responde_noticias_dedicadas(self) -> None:
+        with patch(
+            "core.nova_unica.responder_consulta_noticias",
+            return_value="Notícias do Brasil:\n1. Destaque do dia",
+        ):
+            resposta = orquestrar_consulta("notícias do brasil")
+
+        self.assertEqual(resposta, {"resposta": "Notícias do Brasil:\n1. Destaque do dia"})
+
+    def test_orquestrador_responde_mercado_dedicado(self) -> None:
+        with patch(
+            "core.nova_unica.responder_consulta_mercado",
+            return_value="Petrobras (PETR4.SA): R$ 36,72",
+        ):
+            resposta = orquestrar_consulta("cotação da petrobras")
+
+        self.assertEqual(resposta, {"resposta": "Petrobras (PETR4.SA): R$ 36,72"})
 
     def test_orquestrador_pesquisa_pergunta_factual_sem_modo_explicito(self) -> None:
         with patch(

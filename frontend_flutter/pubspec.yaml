@@ -30,6 +30,8 @@ dependencies:
   package_info_plus: ^8.0.2
   battery_plus: ^6.0.2
   image_picker: ^1.1.2
+  google_mlkit_text_recognition: ^0.15.1
+  image: ^4.8.0
   pdf: ^3.11.1
   printing: ^5.14.0
   # Reconhecimento de fala (microfone -> texto).

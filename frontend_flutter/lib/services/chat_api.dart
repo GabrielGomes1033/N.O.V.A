@@ -83,6 +83,7 @@ class ChatApiService {
     };
     if (_apiToken.isNotEmpty) {
       headers['X-API-Key'] = _apiToken;
+      headers['Authorization'] = 'Bearer $_apiToken';
     }
     return headers;
   }
@@ -912,7 +913,35 @@ class ChatApiService {
         body: body,
       );
     } on ApiHttpException catch (e) {
+      if (e.statusCode == 401 || e.statusCode == 403 || e.statusCode == 404) {
+        try {
+          return await _requestJson(
+            'POST',
+            '/documents/inspect',
+            body: {
+              'filename': fileName,
+              'content_base64': base64Encode(bytes),
+              'auto_learn': false,
+            },
+          );
+        } on ApiHttpException catch (inspectError) {
+          if (inspectError.statusCode != 404) {
+            return _buildLocalDocumentFallback(
+              fileName: fileName,
+              bytes: bytes,
+              reason: inspectError.message,
+            );
+          }
+        }
+      }
       if (e.statusCode == 404) {
+        return _buildLocalDocumentFallback(
+          fileName: fileName,
+          bytes: bytes,
+          reason: e.message,
+        );
+      }
+      if (e.statusCode == 401 || e.statusCode == 403) {
         return _buildLocalDocumentFallback(
           fileName: fileName,
           bytes: bytes,

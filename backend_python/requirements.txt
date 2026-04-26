@@ -18,9 +18,11 @@ pytest>=8.3.0,<9
 pytest-asyncio>=0.24.0,<1
 pyttsx3==2.98
 requests==2.33.1
+python-dotenv>=1.0.1,<2
 structlog>=24.4.0,<25
 urllib3==2.6.3
 uvicorn>=0.35.0,<1
+yfinance>=0.2.54,<1
 
 # ADICIONAR ISSO
 pypdf>=4.2.0,<5

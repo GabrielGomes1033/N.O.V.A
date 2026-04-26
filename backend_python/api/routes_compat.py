@@ -250,6 +250,14 @@ if APIRouter is not None:
         status_code = 200 if out.get("ok") else 400
         return _json(out, status_code=status_code)
 
+    @router.post("/documents/inspect")
+    def documents_inspect(body: dict):
+        filename = str(body.get("filename", "")).strip()
+        content_b64 = str(body.get("content_base64", "")).strip()
+        out = analisar_documento_base64(filename, content_b64, auto_learn=False)
+        status_code = 200 if out.get("ok") else 400
+        return _json(out, status_code=status_code)
+
     @router.post("/agent/plan", dependencies=[Depends(require_token())])
     def agent_plan(body: dict):
         objetivo = str(body.get("objective", "")).strip()

@@ -17,6 +17,8 @@ from core.assistente_plus import (
 )
 from core.caminhos import pasta_dados_app
 from core.memoria import carregar_memoria_usuario
+from core.mercado import responder_consulta_mercado
+from core.noticias import responder_consulta_noticias
 from core.seguranca import carregar_json_seguro, salvar_json_seguro
 
 
@@ -473,11 +475,13 @@ def orquestrar_consulta(mensagem: str, contexto: dict | None = None) -> dict | N
             "resposta": "Tive dúvida nesse cálculo. Pode me ensinar esse padrão com /ensinar pergunta = resposta."
         }
 
-    # Mercado
-    if any(
-        k in l for k in ["cotacao", "cotação", "dolar", "euro", "bitcoin", "ethereum", "mercado"]
-    ):
-        return {"resposta": formatar_cotacoes_humanas(cotacoes_financeiras())}
+    noticias = responder_consulta_noticias(msg)
+    if noticias:
+        return {"resposta": noticias}
+
+    mercado = responder_consulta_mercado(msg)
+    if mercado:
+        return {"resposta": mercado}
 
     # Clima
     if any(k in l for k in ["clima", "tempo", "temperatura"]):

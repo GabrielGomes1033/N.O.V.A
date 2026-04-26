@@ -16,6 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/chat_api.dart';
 import '../services/api_endpoint_config.dart';
+import '../services/attachment_analysis_service.dart';
 import '../services/background_wake_service.dart';
 import '../services/app_security_service.dart';
 import '../services/device_connectivity.dart';
@@ -41,6 +42,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final SpeechToText _speech = SpeechToText();
   final FlutterTts _tts = FlutterTts();
   final ChatApiService _api = ChatApiService();
+  final AttachmentAnalysisService _attachmentAnalysis =
+      AttachmentAnalysisService();
   final LocalDatabaseService _localDb = LocalDatabaseService();
   final DeviceConnectivityService _deviceConnectivity =
       DeviceConnectivityService();
@@ -2181,6 +2184,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     String selectedName = '';
     Uint8List? selectedBytes;
+    String? selectedPath;
+    bool selectedFromCamera = false;
     bool loading = false;
     String error = '';
     String reportText = '';
@@ -2205,21 +2210,38 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final recs = (report['recommendations'] is List)
           ? (report['recommendations'] as List)
           : const [];
+      final image = (report['image'] is Map)
+          ? Map<String, dynamic>.from(report['image'] as Map)
+          : <String, dynamic>{};
+      final analysisType = report['analysis_type']?.toString() ?? 'document';
+      final source = report['source']?.toString() ?? 'arquivo';
 
       final lines = <String>[
-        'Relatório de documento',
+        'Relatório de análise',
         '- Arquivo: ${report['file_name'] ?? '-'}',
+        '- Tipo: $analysisType',
+        '- Origem: $source',
         '- Gerado em: ${report['generated_at'] ?? '-'}',
         '- Tamanho: ${stats['bytes'] ?? 0} bytes',
         '- Caracteres: ${stats['chars'] ?? 0}',
         '- Palavras: ${stats['words'] ?? 0}',
         '- Páginas estimadas: ${stats['estimated_pages'] ?? 0}',
+      ];
+      if (image.isNotEmpty) {
+        lines.add('- Resolução: ${image['width'] ?? 0}x${image['height'] ?? 0} px');
+        lines.add('- Orientação: ${image['orientation'] ?? '-'}');
+        lines.add('- Formato: ${image['format'] ?? image['extension'] ?? '-'}');
+        if ((image['brightness_label']?.toString() ?? '').isNotEmpty) {
+          lines.add('- Iluminação estimada: ${image['brightness_label']}');
+        }
+      }
+      lines.addAll([
         '',
         'Resumo executivo:',
         '${report['executive_summary'] ?? 'Sem resumo.'}',
         '',
         'Palavras-chave:',
-      ];
+      ]);
       if (keywords.isEmpty) {
         lines.add('- nenhuma');
       } else {
@@ -2256,7 +2278,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     Future<void> analisarSelecionado(StateSetter setLocalState) async {
       if (selectedBytes == null || selectedName.isEmpty) {
-        setLocalState(() => error = 'Selecione um arquivo antes.');
+        setLocalState(() => error = 'Selecione um arquivo ou imagem antes.');
         return;
       }
       setLocalState(() {
@@ -2264,20 +2286,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         error = '';
       });
       try {
-        final out = await _api.analyzeDocument(
-          fileName: selectedName,
-          bytes: selectedBytes!,
-        );
+        final isImage = _attachmentAnalysis.isImageFileName(selectedName);
+        final out = isImage
+            ? await _attachmentAnalysis.analyzeImage(
+                fileName: selectedName,
+                bytes: selectedBytes!,
+                filePath: selectedPath,
+                fromCamera: selectedFromCamera,
+              )
+            : await _api.analyzeDocument(
+                fileName: selectedName,
+                bytes: selectedBytes!,
+                autoLearn: _config['auto_document_learning'] != false,
+              );
         final txt = formatarRelatorio(out);
         final learning = (out['learning'] is Map)
             ? Map<String, dynamic>.from(out['learning'] as Map)
             : <String, dynamic>{};
         final learnOk = learning['ok'] == true;
         final localFallback = learning['local_fallback'] == true;
+        final learningMessage = learning['message']?.toString().trim() ?? '';
         final learnMsg = learnOk
             ? 'Aprendizado automático: OK • base atualizada.'
             : localFallback
-                ? 'Relatório gerado localmente. O backend não possui endpoint de análise.'
+                ? (learningMessage.isNotEmpty
+                    ? learningMessage
+                    : 'Relatório gerado localmente no dispositivo.')
                 : (learning['skipped'] == true
                     ? 'Aprendizado automático desativado.'
                     : 'Aprendizado automático: sem atualização.');
@@ -2313,7 +2347,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         allowMultiple: false,
         withData: true,
         type: FileType.custom,
-        allowedExtensions: ['txt', 'md', 'pdf', 'docx', 'json', 'csv', 'log'],
+        allowedExtensions: [
+          'txt',
+          'md',
+          'pdf',
+          'docx',
+          'json',
+          'csv',
+          'log',
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'bmp',
+          'gif',
+        ],
       );
       if (res == null || res.files.isEmpty) return;
       final f = res.files.first;
@@ -2332,12 +2380,67 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setLocalState(() {
         selectedName = f.name;
         selectedBytes = bytes;
+        selectedPath = f.path;
+        selectedFromCamera = false;
         error = '';
         reportText = '';
         learningText = '';
         subjectsText = '';
       });
       await analisarSelecionado(setLocalState);
+    }
+
+    Future<void> selecionarImagemGaleria(StateSetter setLocalState) async {
+      try {
+        final picked = await _imagePicker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 95,
+        );
+        if (picked == null) return;
+        final bytes = await picked.readAsBytes();
+        setLocalState(() {
+          selectedName = picked.name;
+          selectedBytes = bytes;
+          selectedPath = picked.path;
+          selectedFromCamera = false;
+          error = '';
+          reportText = '';
+          learningText = '';
+          subjectsText = '';
+        });
+        await analisarSelecionado(setLocalState);
+      } catch (e) {
+        setLocalState(() {
+          error = 'Não consegui abrir a galeria agora: ${e.toString().replaceFirst('Exception: ', '')}';
+        });
+      }
+    }
+
+    Future<void> capturarFotoParaAnalise(StateSetter setLocalState) async {
+      try {
+        final picked = await _imagePicker.pickImage(
+          source: ImageSource.camera,
+          preferredCameraDevice: CameraDevice.rear,
+          imageQuality: 95,
+        );
+        if (picked == null) return;
+        final bytes = await picked.readAsBytes();
+        setLocalState(() {
+          selectedName = picked.name;
+          selectedBytes = bytes;
+          selectedPath = picked.path;
+          selectedFromCamera = true;
+          error = '';
+          reportText = '';
+          learningText = '';
+          subjectsText = '';
+        });
+        await analisarSelecionado(setLocalState);
+      } catch (e) {
+        setLocalState(() {
+          error = 'Não consegui capturar a foto agora: ${e.toString().replaceFirst('Exception: ', '')}';
+        });
+      }
     }
 
     if (!mounted) return;
@@ -2380,19 +2483,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             }
 
             return NovaPanelDialog(
-              title: 'ANÁLISE DE DOCUMENTOS',
+              title: 'ANÁLISE DE ARQUIVOS',
               child: SizedBox(
                 width: 760,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Expanded(
+                        SizedBox(
+                          width: 280,
                           child: Text(
                             selectedName.isEmpty
-                                ? 'Nenhum arquivo selecionado'
+                                ? 'Nenhum arquivo ou imagem selecionado'
                                 : 'Arquivo: $selectedName',
                             style: const TextStyle(color: Color(0xFFBCE8FF)),
                             overflow: TextOverflow.ellipsis,
@@ -2403,7 +2510,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               ? null
                               : () => selecionarArquivo(setLocalState),
                           icon: const Icon(Icons.attach_file, size: 16),
-                          label: const Text('Anexar'),
+                          label: const Text('Arquivo'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: loading
+                              ? null
+                              : () => selecionarImagemGaleria(setLocalState),
+                          icon: const Icon(Icons.image_outlined, size: 16),
+                          label: const Text('Imagem'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: loading
+                              ? null
+                              : () => capturarFotoParaAnalise(setLocalState),
+                          icon: const Icon(Icons.camera_alt_outlined, size: 16),
+                          label: const Text('Tirar foto'),
                         ),
                       ],
                     ),
@@ -2460,7 +2581,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       child: SingleChildScrollView(
                         child: Text(
                           reportText.isEmpty
-                              ? 'Anexe um documento e clique em "Gerar relatório completo".'
+                              ? 'Anexe um documento, escolha uma imagem ou tire uma foto para gerar o relatório.'
                               : reportText,
                           style: const TextStyle(
                             color: Color(0xFFD4F4FF),

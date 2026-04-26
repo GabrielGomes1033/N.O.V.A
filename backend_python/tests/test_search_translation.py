@@ -91,6 +91,42 @@ class SearchTranslationTests(unittest.TestCase):
             self.assertIn("Electric cars reduce emissions", traducao["reply"])
             memory.close()
 
+    def test_web_search_reply_is_structured_in_chat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            memory = MemoryStore(Path(tmpdir) / "nova_memory_test.db")
+            orchestrator = NovaOrchestrator(
+                memory=memory,
+                tools=build_default_tools(memory),
+                llm=RuleBasedLLM(),
+            )
+
+            with patch(
+                "core.orchestrator.integration_search_web",
+                return_value={
+                    "ok": True,
+                    "query": "machine learning",
+                    "summary": "Machine learning permite que sistemas aprendam a partir de dados.",
+                    "results": [
+                        {
+                            "title": "Machine learning",
+                            "snippet": "É uma área da IA focada em aprender padrões e fazer previsões.",
+                            "url": "https://pt.wikipedia.org/wiki/Aprendizado_de_maquina",
+                        }
+                    ],
+                    "sources": ["https://pt.wikipedia.org/wiki/Aprendizado_de_maquina"],
+                },
+            ):
+                pesquisa = orchestrator.handle(
+                    "tester",
+                    "pesquise sobre machine learning",
+                )
+
+            self.assertIn("Pesquisei sobre machine learning", pesquisa["reply"])
+            self.assertIn("Explicacao direta", pesquisa["reply"])
+            self.assertIn("Pontos principais", pesquisa["reply"])
+            self.assertIn("Fontes consultadas", pesquisa["reply"])
+            memory.close()
+
     def test_search_reply_can_offer_translation_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             memory = MemoryStore(Path(tmpdir) / "nova_memory_test.db")
