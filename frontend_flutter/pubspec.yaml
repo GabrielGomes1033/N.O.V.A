@@ -51,4 +51,4 @@ flutter:
   # Habilita uso dos icones Material Design.
   uses-material-design: true
   assets:
-    - assets/giphy3.gif
+    - assets/nova_logo.png

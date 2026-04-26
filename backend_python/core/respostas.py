@@ -11,6 +11,7 @@ from core.aprendizado_admin import (
     carregar_aprendizado_legado,
     salvar_aprendizado as salvar_aprendizado_v2,
 )
+from core.dev_assistente import processar_comando_dev
 from core.personalidade import estilizar
 
 
@@ -616,6 +617,10 @@ def responder(
     # Fluxo principal de resposta:
     # 1. tenta responder com base no que foi aprendido
     # 2. se não achar, usa as intenções e respostas padrão do modo atual
+    resposta_dev = processar_comando_dev(msg, contexto=contexto)
+    if resposta_dev:
+        return resposta_dev
+
     resposta_aprendida = buscar_resposta_aprendida(msg, arquivo_aprendizado)
     if resposta_aprendida:
         resposta = resposta_aprendida

@@ -16,6 +16,7 @@ from core.assistente_plus import (
     pesquisar_na_internet,
 )
 from core.caminhos import pasta_dados_app
+from core.dev_assistente import processar_comando_dev
 from core.memoria import carregar_memoria_usuario
 from core.mercado import responder_consulta_mercado
 from core.noticias import responder_consulta_noticias
@@ -451,6 +452,10 @@ def orquestrar_consulta(mensagem: str, contexto: dict | None = None) -> dict | N
         return None
     l = msg.lower()
     modo_pesquisa = bool(contexto.get("modo_pesquisa"))
+
+    resposta_dev = processar_comando_dev(msg, contexto=contexto)
+    if resposta_dev:
+        return {"resposta": resposta_dev}
 
     # Cálculo
     if (

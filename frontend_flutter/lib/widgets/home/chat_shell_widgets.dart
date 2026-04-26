@@ -76,13 +76,20 @@ class NovaTopBar extends StatelessWidget {
               ],
             ),
             child: const Center(
-              child: Stack(
-                alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Opacity(
-                    opacity: 0,
-                    child: Text('NOVA'),
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: ClipOval(
+                      child: Image(
+                        image: AssetImage('assets/nova_logo.png'),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                   ),
+                  SizedBox(width: 10),
                   Text(
                     'N . O . V . A',
                     style: TextStyle(
@@ -216,7 +223,7 @@ class NovaChatTimeline extends StatelessWidget {
                   ],
                 ),
                 child: ClipOval(
-                  child: Image.asset('assets/giphy3.gif', fit: BoxFit.cover),
+                  child: Image.asset('assets/nova_logo.png', fit: BoxFit.cover),
                 ),
               ),
               const SizedBox(width: 8),

@@ -5,6 +5,6 @@ import 'package:frontend_flutter/app.dart';
 void main() {
   testWidgets('renderiza tela inicial da NOVA', (WidgetTester tester) async {
     await tester.pumpWidget(const NovaFrontendApp());
-    expect(find.text('NOVA'), findsOneWidget);
+    expect(find.text('N . O . V . A'), findsOneWidget);
   });
 }

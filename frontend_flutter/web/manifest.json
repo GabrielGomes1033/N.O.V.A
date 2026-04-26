@@ -1,11 +1,11 @@
 {
-    "name": "frontend_flutter",
-    "short_name": "frontend_flutter",
+    "name": "NOVA",
+    "short_name": "NOVA",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#031017",
+    "theme_color": "#14E6FF",
+    "description": "Assistente NOVA com voz, memoria e automacoes.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

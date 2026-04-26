@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Estoque - NOVA</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <h1>Controle de estoque</h1>
+      <p>Cadastre produtos para começar a montar seu sistema.</p>
+
+      <div class="grid">
+        <input id="produto" type="text" placeholder="Nome do produto">
+        <input id="quantidade" type="number" min="0" placeholder="Quantidade">
+        <button type="button" onclick="adicionarProduto()">Adicionar item</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Produto</th>
+            <th>Quantidade</th>
+          </tr>
+        </thead>
+        <tbody id="lista-estoque"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
